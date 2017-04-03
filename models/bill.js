@@ -2,14 +2,11 @@ const cozy = require('../lib/cozyclient')
 const moment = require('moment')
 
 module.exports = {
-  displayName: "Bill",
-  all(callback) {
-    cozy.authorize()
-    .then(() => {
-      return cozy.data.defineIndex("io.cozy.bills", ["date"])
-    })
+  displayName: 'Bill',
+  all (callback) {
+    cozy.data.defineIndex('io.cozy.bills', ['date'])
     .then((index) => {
-      return cozy.data.query(index, {"selector": {date: {"$gt": 0}}})
+      return cozy.data.query(index, {'selector': {date: {'$gt': 0}}})
     })
     .then(bills => {
       bills = bills.map(bill => {
@@ -22,8 +19,8 @@ module.exports = {
       callback(err)
     })
   },
-  create(entry, callback) {
-    cozy.data.create("io.cozy.bills", entry)
+  create (entry, callback) {
+    cozy.data.create('io.cozy.bills', entry)
     .then(() => callback())
     .catch(err => callback(err))
   }

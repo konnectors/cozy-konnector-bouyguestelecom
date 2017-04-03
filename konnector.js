@@ -1,5 +1,6 @@
 const qs = require('querystring')
 const request = require('request')
+// require('request-debug')(request)
 const moment = require('moment')
 const cheerio = require('cheerio')
 const fetcher = require('./lib/fetcher')
@@ -27,22 +28,7 @@ module.exports = {
     css: '#009DCC'
   },
 
-  fields: {
-    phoneNumber: {
-      type: 'text'
-    },
-    password: {
-      type: 'password'
-    },
-    folderPath: {
-      type: 'folder',
-      advanced: true
-    }
-  },
-
-  dataType: [
-    'bill'
-  ],
+  dataType: ['bill'],
 
   models: [Bill],
 
@@ -188,6 +174,8 @@ var parsePage = function (requiredFields, bills, data, next) {
     }
     return bills.fetched.push(bill)
   })
+
+  console.log(JSON.stringify(bills.fetched), "bills fetched")
 
   log.info('Bill data parsed.')
   return next()

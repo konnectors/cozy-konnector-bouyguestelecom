@@ -3,11 +3,9 @@ const request = require('request')
 // require('request-debug')(request)
 const moment = require('moment')
 const cheerio = require('cheerio')
-const fetcher = require('./lib/fetcher')
 
-const filterExisting = require('./lib/filter_existing')
-const saveDataAndFile = require('./lib/save_data_and_file')
-const Bill = require('./models/bill')
+const {fetcher, filterExisting, saveDataAndFile, models} = require('cozy-konnector-libs')
+const Bill = models.bill
 
 const log = require('printit')({
   prefix: 'Bouygues Telecom',
@@ -174,8 +172,6 @@ var parsePage = function (requiredFields, bills, data, next) {
     }
     return bills.fetched.push(bill)
   })
-
-  console.log(JSON.stringify(bills.fetched), "bills fetched")
 
   log.info('Bill data parsed.')
   return next()

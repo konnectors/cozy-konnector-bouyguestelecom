@@ -3,6 +3,6 @@ const path = require('path')
 const tokenPath = path.join(__dirname, 'token.json')
 module.exports = {
   COZY_CREDENTIALS: fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath) : 'NO TOKEN',
-  COZY_URL: 'http://cozy.tools:8080',
-  COZY_FIELDS: '{"phoneNumber": "0000000000", "password": "password", "folderPath": "Bouygues"}'
+  COZY_URL: 'https://christophe.cozy.rocks',
+  COZY_FIELDS: '{"phoneNumber": "0616312701", "password": "5q=cI1^^SN{#`@zJ", "folderPath": "Bouygues"}'
 }

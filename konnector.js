@@ -73,7 +73,7 @@ function logIn (requiredFields, bills, data, next) {
 
     // Second request to log in (post the form).
     const form = {
-      'username': requiredFields.phoneNumber,
+      'username': requiredFields.login,
       'password': requiredFields.password,
       'lt': lt,
       'execution': execution,

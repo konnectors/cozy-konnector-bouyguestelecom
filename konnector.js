@@ -63,7 +63,7 @@ function logIn (requiredFields, bills, data, next) {
     if (err) {
       log('info', 'Login infos could not be fetched')
       log('error', err)
-      return next('bad credentials')
+      return next('LOGIN_FAILED')
     }
 
     // Extract hidden values

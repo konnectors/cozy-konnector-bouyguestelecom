@@ -2,9 +2,9 @@
   "version": "1.0.0",
   "name": "Bouygues Telecom",
   "type": "node",
-  "slug": "konnectorslug",
-  "description": "description",
-  "source": "git://github.com/cozy/cozy-konnector-thename.git",
+  "slug": "bouyguestelecom",
+  "description": "Get all the bills from Bouygues Telecom",
+  "source": "git://github.com/cozy/cozy-konnector-bouyguestelecom.git",
   "fields": {
     "save_folder": {
       "doctype": "io.cozy.files",

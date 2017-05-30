@@ -3,7 +3,6 @@
   "name": "Bouygues Telecom",
   "type": "node",
   "slug": "bouyguestelecom",
-  "description": "Get all the bills from Bouygues Telecom",
   "source": "git://github.com/cozy/cozy-konnector-bouyguestelecom.git",
   "fields": {
     "save_folder": {

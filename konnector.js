@@ -156,8 +156,7 @@ function parsePage (requiredFields, bills, data, next) {
 
     // Get the facture id and build the download url from it.
     const id = $(this).attr('facture-id')
-    const params =
-    {id}
+    const params = {id}
     const url = `${baseDlUrl}?${qs.stringify(params)}`
 
     // Build bill object.

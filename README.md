@@ -114,7 +114,9 @@ git://github.com/cozy/cozy-konnector-bouyguestelecom.git#build
 
 ### Maintainer
 
-The lead maintainers for Bouygues Telecom Konnector is @doubleface for Cozy Cloud.
+The lead maintainer for Bouygues Telecom Konnector is @doubleface for Cozy Cloud.
+Before, this konnector was created and maintained by Frank Rousseau. And
+nicofrand contributed to.
 
 
 ### Get in touch

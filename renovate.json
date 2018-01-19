@@ -1,15 +1,15 @@
 {
-  "packageRules": [
-    {
-      "patch": {
-        "automerge": true
-      },
-      "packagePatterns": [
-        "^cozy-konnector-libs"
-      ]
-    }
-  ],
   "extends": [
     "config:base"
+  ],
+  "packageRules": [
+    {
+      "packagePatterns": [
+        "^cozy-konnector-libs"
+      ],
+      "patch": {
+        "automerge": true
+      }
+    }
   ]
 }

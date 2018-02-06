@@ -69,11 +69,11 @@ function logIn(fields) {
       return rq(loginOptions)
     })
     .then($ => {
-      log('info', 'Successfully logged in.')
       const badLogin = $('.error-icon').length > 0
       if (badLogin) {
         throw new Error('LOGIN_FAILED')
       }
+      log('info', 'Successfully logged in.')
 
       const $txtindispo = $('.txt-indispo')
       if ($txtindispo.length) {

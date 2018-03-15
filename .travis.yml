@@ -1,27 +1,26 @@
 language: node_js
-matrix:
-  fast_finish: true
 node_js:
-- '6'
-branches:
-  except:
-  - build
+  - '8'
 env:
   global:
-  - CXX=g++-4.8
-addons:
-  apt:
-    sources:
-    - ubuntu-toolchain-r-test
-    - deadsnakes
-    packages:
-    - g++-4.8
-    - python3.5
+    # kosssi GITHUB_TOKEN
+    - secure: "UTYia+fHKvGuSYrNMNUoV53dVOHPJSQfAAvG/cNT+e4FDLhhAOL8bcf5DiHl19CWdtMApg85Yx5nrLNtPC+lYH1L4gq1KBaMS/iK2Y5Gfv5JMq4/cUwmJZtR521RrodQjWKBcdyE+S0Rn/uoKWsZxvqzR1zdDcn6oOSliLG5YQaiSti5jusuPSwKqqERNBWQG4zFKebWIQXUpcD9MAZFe+nEqN3AJMmPVNbSqF4oEAS5U90eulGAow2wDowrDa7pwB5P0/L9pYJ8T0+7Y2dRjlFrg1rW0ZHrR2ip7j8JYV1FCwFBw8MCTR5oDfL55VwpZhjRz+aF01ADeVTHH3mjV4jac27EQNU46QVQacROWRogNd3BvmHHqSmYFUReRqyH9gT9jL5TsDrQ+FNIo1gvd9VpoOlGNmG1cOfAXE73NVvMdUEB+TZTc8vi9vN9mFMW5CPu7awOeuaRDp+MRYtaO1vgj8xMq7FeTyNK120lNw1RGTjPrUN4PgN2b0uUdViMhg7IL8cyaxxctuqCsgr8Lg1WbyZPB+Xf1HQdkmI5umX0pEKUu1WxHTWtlaRn/ZqeXFJ2As+Bqza+vLGm6Ov2/w7y14fp4YAhyapuCYoawdVIxyPpo8WN2O1ir6wsHf+jX64kgl2CEHuOpGW/yWSZ1UqvIbsXvejYobUfng31uyQ="
 cache:
   yarn: true
   directories:
-  - node_modules
+    - node_modules
 script:
-- yarn build
-after_success:
-  - test $TRAVIS_BRANCH = "master" && yarn run deploy:travis -- --branch=build
+  - yarn build
+deploy:
+  - provider: script
+    repo: konnectors/cozy-konnector-harmonie
+    skip-cleanup: true
+    script: yarn deploy
+    on:
+      branch: master
+  - provider: script
+    repo: konnectors/cozy-konnector-harmonie
+    skip-cleanup: true
+    script: yarn deploy:prod
+    on:
+      branch: prod

@@ -1,4 +1,8 @@
-'use strict'
+// Force sentry DSN into environment variables
+// In the future, will be set by the stack
+process.env.SENTRY_DSN =
+  process.env.SENTRY_DSN ||
+  'https://911e993f78084056acd7573dd2c02796:4516f6bd679d467db06aa35b84b3984b@sentry.cozycloud.cc/21'
 
 const qs = require('querystring')
 const moment = require('moment')

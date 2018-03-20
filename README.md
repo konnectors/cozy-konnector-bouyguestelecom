@@ -124,7 +124,7 @@ You can follow these steps to enable building using Travis:
 
 Now Travis is ready to build your project, it should build it each time your push a commit in your repository or create a pull request.
 
-> __Note:__ Travis will push your build to your `build` branch ONLY for commits made on your master branch (included PR merge commits). You can see the related Travis statement [here](https://github.com/cozy/cozy-konnector-template/blob/master/.travis.yml#L27).
+> __Note:__ Travis will push your build to your `build` branch ONLY for commits made on your master branch (included PR merge commits). You can see the related Travis statement [here](https://github.com/konnectors/cozy-konnector-template/blob/master/.travis.yml#L27).
 
 
 ### Standard

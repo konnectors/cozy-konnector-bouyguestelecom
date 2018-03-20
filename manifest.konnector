@@ -3,7 +3,7 @@
   "name": "Bouygues Telecom",
   "type": "node",
   "slug": "bouyguestelecom",
-  "source": "git://github.com/cozy/cozy-konnector-bouyguestelecom.git",
+  "source": "git://github.com/konnectors/cozy-konnector-bouyguestelecom.git",
   "fields": {
     "save_folder": {
       "doctype": "io.cozy.files",

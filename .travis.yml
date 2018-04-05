@@ -6,6 +6,8 @@ env:
     # kosssi GITHUB_TOKEN
     # to generate yours : travis encrypt GITHUB_TOKEN=<your_GITHUB_TOKEN>
     - secure: "UTYia+fHKvGuSYrNMNUoV53dVOHPJSQfAAvG/cNT+e4FDLhhAOL8bcf5DiHl19CWdtMApg85Yx5nrLNtPC+lYH1L4gq1KBaMS/iK2Y5Gfv5JMq4/cUwmJZtR521RrodQjWKBcdyE+S0Rn/uoKWsZxvqzR1zdDcn6oOSliLG5YQaiSti5jusuPSwKqqERNBWQG4zFKebWIQXUpcD9MAZFe+nEqN3AJMmPVNbSqF4oEAS5U90eulGAow2wDowrDa7pwB5P0/L9pYJ8T0+7Y2dRjlFrg1rW0ZHrR2ip7j8JYV1FCwFBw8MCTR5oDfL55VwpZhjRz+aF01ADeVTHH3mjV4jac27EQNU46QVQacROWRogNd3BvmHHqSmYFUReRqyH9gT9jL5TsDrQ+FNIo1gvd9VpoOlGNmG1cOfAXE73NVvMdUEB+TZTc8vi9vN9mFMW5CPu7awOeuaRDp+MRYtaO1vgj8xMq7FeTyNK120lNw1RGTjPrUN4PgN2b0uUdViMhg7IL8cyaxxctuqCsgr8Lg1WbyZPB+Xf1HQdkmI5umX0pEKUu1WxHTWtlaRn/ZqeXFJ2As+Bqza+vLGm6Ov2/w7y14fp4YAhyapuCYoawdVIxyPpo8WN2O1ir6wsHf+jX64kgl2CEHuOpGW/yWSZ1UqvIbsXvejYobUfng31uyQ="
+    # REGISTRY_TOKEN
+    - secure: iizk9f+fdFhSr5K3CIIuyBU1LCfXKRC9pU4f6EzheVi4l7jd7vH1opTnTZXEoVXnfEGuEvS/zmw71SJD3QKBpMaK0XKoyKAqSu6YoCwkSOyoJFsrWVEy6F/gkxw/bxFnwPxtUy/sNnqUbY+6Yr0nueFR2PuGsAgjhkKb7whxJZnUeaoURYYuNm2dITYKjdNM79eCb43towwQUTyiDSoCZkXgAHI8m4jMl4emoUngQlKyPS5zsA0toChMw11zSZClHt/UDA+a3QE95jHsFmJ21D5aifxG5kGxTJ2u73S0P6I6e4AL3mPSoVWZhTPQorgwyFx+OpbyuFUiusVHw8a7DOaBSd/vrHpovQEKBKIqOIyaV5APveGsaJweZ5Ty9bGk71oQKzg6EZMFlYZqruOnI23tLZmaW6D+N7ss0KRGgcz4A4SFDFj5zTiyshPVjPurgTcIxA44v2E+B1hxhEv2c5XJxlcSBER8OHizz1ykjzXEvhFjJxUrToN17yFa8Xjjkts6FpH69URcqhF3FC7yjtY4PY2L6INfBxE5OB7YuwM+AV77ITUj917Ttk1taMNZFDPtHsk+b9OwXJs7QHKfp67eujRmIJgUIWk8f+TrMgJkBwh9a85niGGHTeyyhkDXjCxbFygbLvIiuoVvhC3IF5lF4X3BkBKqNKFZbA5MoCc=
   matrix:
     # kosssi account
     # to generate yours : travis encrypt KONNECTOR_CONFIG=\'"`cat konnector-dev-config.json | tr -d '\n'`"\' -r konnectors/cozy-konnector-bouyguestelecom
@@ -22,12 +24,12 @@ deploy:
   - provider: script
     repo: konnectors/cozy-konnector-bouyguestelecom
     skip-cleanup: true
-    script: yarn deploy
+    script: DEPLOY_BRANCH=build && yarn deploy && yarn cozyPublish
     on:
       branch: master
   - provider: script
     repo: konnectors/cozy-konnector-bouyguestelecom
     skip-cleanup: true
-    script: yarn deploy:prod
+    script: DEPLOY_BRANCH=latest && yarn deploy && yarn cozyPublish
     on:
       branch: prod

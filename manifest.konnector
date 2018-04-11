@@ -1,42 +1,43 @@
 {
   "version": "1.0.0",
   "name": "Bouygues Telecom",
-  "type": "node",
-  "slug": "bouyguestelecom",
+  "slug": "bouyguestelecom-collect",
+  "type": "konnector",
+  "language": "node",
+  "icon": "icon.svg",
   "source": "git://github.com/konnectors/cozy-konnector-bouyguestelecom.git",
+  "editor": "Cozy",
+  "vendorLink": "https://www.bouyguestelecom.fr/",
+  "developer": {
+    "name": "doubleface",
+    "url": "https://github.com/doubleface"
+  },
+  "categories": ["telecom"],
+  "screenshots": ["screenshots/screenshot.png"],
+  "langs": ["fr"],
+  "dataType": [
+    "bill"
+  ],
   "fields": {
-    "save_folder": {
-      "doctype": "io.cozy.files",
-      "type": "folder"
+    "login": {
+      "type": "text"
     },
-    "account": {
-      "doctype": "io.cozy.accounts",
-      "account_type": "bouygues",
-      "accountFormat": "login,password"
+    "password": {
+      "type": "password"
+    },
+    "advancedFields": {
+      "folderPath": {
+        "advanced": true,
+        "isRequired": false
+      }
     }
   },
   "locales": {
     "fr": {
-      "description": "Récupère toutes vos factures Bouygues Telecom",
-      "permissions": {
-        "bills": {
-          "description": "Utilisé pour sauvegarder les données de facturation"
-        },
-        "files": {
-          "description": "Utilisé pour sauvegarder les factures"
-        }
-      }
+      "short_description": "Récupère toutes vos factures Bouygues Telecom"
     },
     "en": {
-      "description": "Retrieves all your Bouygues Telecom invoices",
-      "permissions": {
-        "bills": {
-          "description": "Used to save billing data"
-        },
-        "files": {
-          "description": "Used to save invoices"
-        }
-      }
+      "short_description": "Retrieves all your Bouygues Telecom invoices"
     }
   },
   "permissions": {
@@ -57,9 +58,5 @@
       "type": "io.cozy.accounts",
       "verbs": ["GET"]
     }
-  },
-  "developer": {
-    "name": "doubleface",
-    "url": "https://github.com/doubleface"
   }
 }

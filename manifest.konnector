@@ -1,21 +1,21 @@
 {
   "version": "1.0.0",
   "name": "Bouygues Telecom",
-  "slug": "bouyguestelecom-collect",
+  "slug": "bouyguestelecom",
   "type": "konnector",
   "language": "node",
   "icon": "icon.svg",
   "source": "git://github.com/konnectors/cozy-konnector-bouyguestelecom.git",
   "editor": "Cozy",
-  "vendorLink": "https://www.bouyguestelecom.fr/",
+  "vendor_link": "https://www.bouyguestelecom.fr/",
   "developer": {
     "name": "doubleface",
     "url": "https://github.com/doubleface"
   },
   "categories": ["telecom"],
-  "screenshots": ["screenshots/screenshot.png"],
+  "screenshots": [],
   "langs": ["fr"],
-  "dataType": [
+  "data_types": [
     "bill"
   ],
   "fields": {

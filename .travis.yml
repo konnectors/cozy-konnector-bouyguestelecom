@@ -7,8 +7,6 @@ env:
   - GH_USER_NAME="cozy-bot"
   - DEPLOY_REPOSITORY="git@github.com:konnectors/cozy-konnector-template.git"
   - secure: gJfx5f1y1avv4F+XRu7rEu4EE5GGbwzyp/UGtQRiIQ6f14v4d84tXbJ1TKTn3Z0khUnBQaSEbc9a0r+uWMlMp4oZ0II351dBWmzDhqQNrNocuvl2YGrlVtk2BNBrm+Ql9al4+Cl9oDUrtPEKgSfsKXhAJYtJmyL9D3ZIt4pRUcg+thOocpn/isEh9wtxbvjShB7CZcAcilTJsYKgAXGQSCqqlLHpnj5ShgTv88uiYphlLk3nCPRY/FOe0uHuYuHFa4PZ0HCNEm/sf0f5yhR276xenTbMSwlYqNkQqzj8/H30+NbXSmd1I4mnCN5AzbP0NGtNAwO4EkwqZ0n7bFCgaJ1NKzR14Ma7pPig7YdSRmlHr0j0j2sxxi/Qe9hzAHIBl/yn/TvXetU78VhPNpCQ9VTz8H5G+G8k2A4V5T2X6x53dTPDTDxqc9Q2pAi/zHnvo6r1OBmKGU+nBDWg9cz0cMDMbwSdVUnuLsPor7H2+wSo+7mIQ6BCBNGdqBQLNk+Pec9AZerZlucYAw45Ba3JqPL3HcJbT44Wc30rGYPHNRa8eb8HiRsUsT7fPfLC/B0DuOTUem3kIWRMHQjRsnhdN9SspfkynMK618NDTADaqq2llca0LJ//kJnE6nN9DDiEgMEoqhakKHzDWSPISiU0kdKAalVG2Xp9q3OFzqN16UM=
-  matrix:
-  - secure: fmI9/F7L91xsiVDDC0xzh/emuPnI8HuIs2TbClZfeJAw7LXbj1K95Wz74kwrYlUPHVamOqumtpJ5fQ/dpSoFS76q0Axr7XQTducXRggWYZUFL11NFPndEmhnB3kpDJnVKmQ2f3nHCM93RbX80oBYQIXmtHih/j5bHjdKZf5Z0n21rwvxZsBsBYSgAwWSS6eEjgc57GIrhvwMej134VCrrELyKVtFaoTYTn9s9vwf/BOyhHQ5fdA7Lz6ZkNQhYpCcCyxrkLw3GSab+rBuEmw6DAloMRIqwk6shPXSGvlRKCfV/3tsXK+jp0AfQlbLOQkV5YhNeL+V7c9QQYD0FXiyIR7/FGZvAJdj7tT9a/ZaO9SNjrfJZZI35/vXtnnZj8v+e9j0GWqdatjqFzdVxwKbFlLjkY06agtrgw4+v36X34n/NXlZ4CEoLuqQmdwf8o7kwBfxBpoNHUdsivrDTWfc+MdYgI3Isf0hhukg5vMZNNeLwk0Bl+qNffTLFrVrVUxQCpDI9JKdZmpbmLcmPcWgOp1PL05dHXPqoCfWNNJ+j0BwxpKg2nRhtbcwhoikr3vqm2EP6HopSlHjpNKZcjdYg+uOBPJ0p3m77bDrLydFMlfKo/9m2Tww33sGPDH2hSMzvIZAfbqnhIbl7znQmJ7vXeirvfUbKFbUQJnRvcbXh6g=
 cache:
   yarn: true
   directories:
@@ -16,7 +14,6 @@ cache:
 script:
 - yarn lint
 - yarn build
-- if [ $TRAVIS_SECURE_ENV_VARS = "true" ]; then yarn test; fi
 deploy:
 - provider: script
   skip-cleanup: true

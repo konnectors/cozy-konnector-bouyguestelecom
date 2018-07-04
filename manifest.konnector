@@ -57,5 +57,6 @@
   "developer": {
     "name": "Cozy Cloud",
     "url": "https://cozy.io"
-  }
+  },
+  "banksTransactionRegExp": "\\bbouyg"
 }

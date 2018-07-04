@@ -19,6 +19,7 @@ let rq = requestFactory({
   json: false,
   jar: true,
   // debug: true,
+  strictSSL: undefined,
   headers: {}
 })
 

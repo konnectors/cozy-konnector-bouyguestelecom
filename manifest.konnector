@@ -58,5 +58,6 @@
     "name": "Cozy Cloud",
     "url": "https://cozy.io"
   },
-  "banksTransactionRegExp": "\\bbouyg"
+  "banksTransactionRegExp": "\\bbouyg",
+  "manifest_version": "2"
 }

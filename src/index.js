@@ -4,144 +4,137 @@ process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://911e993f78084056acd7573dd2c02796:4516f6bd679d467db06aa35b84b3984b@sentry.cozycloud.cc/21'
 
-const qs = require('querystring')
 const moment = require('moment')
+const jwt = require('jwt-decode')
 
 const {
-  log,
   BaseKonnector,
   saveBills,
-  requestFactory
+  requestFactory,
+  log,
+  signin
 } = require('cozy-konnector-libs')
 
 let rq = requestFactory({
-  cheerio: true,
-  json: false,
-  jar: true,
-  // debug: true,
-  strictSSL: undefined,
-  headers: {}
+    debug: true,
+  cheerio: false,
+  json: true,
+  jar: true
 })
 
-module.exports = new BaseKonnector(function fetch(fields) {
-  return logIn(fields)
-    .then(parsePage)
-    .then(entries =>
-      saveBills(entries, fields.folderPath, {
-        timeout: Date.now() + 60 * 1000,
-        identifiers: 'bouyg'
-      })
-    )
-    .catch(err => {
-      // Connector is not in error if there is not entry in the end
-      // It may be simply an empty account
-      if (err.message === 'NO_ENTRY') return []
-      throw err
-    })
+module.exports = new BaseKonnector(async function fetch(fields) {
+  const baseUrl = 'https://api.bouyguestelecom.fr'
+  const idPersonne = await logIn(fields)
+  log('info', 'Login succeed')
+
+  const personnes = await rq(`${baseUrl}/personnes/${idPersonne}`)
+  const linkFactures = personnes._links.factures.href
+  const comptes = await rq(`${baseUrl}${linkFactures}`)
+  const contratsSignes = await rq(
+    `${baseUrl}/personnes/${idPersonne}/contrats-signes`
+  )
+
+  for (let compte of comptes.comptesFacturation) {
+    const ligneType = findLigneType(compte.id, contratsSignes)
+    if (ligneType === 'MOBILE') {
+      log('debug', `${compte.factures.length} bills found for ${ligneType}`)
+      for (let facture of compte.factures) {
+        // Fetch the facture url to get a json containing the definitive pdf url
+        // If facturePDF is not define, it seems facturePDFDF is ok
+        let result
+        if (facture._links.facturePDF !== undefined) {
+          result = await rq(`${baseUrl}${facture._links.facturePDF.href}`)
+        } else {
+          result = await rq(`${baseUrl}${facture._links.facturePDFDF.href}`)
+        }
+        const factureUrl = `${baseUrl}${result._actions.telecharger.action}`
+        // Call each time because of quick link expiration (~1min)
+        await saveBills(
+          [
+            {
+              vendor: 'Bouygues Telecom',
+              date: new Date(facture.dateFacturation),
+              amount: facture.mntTotFacture,
+              fileurl: factureUrl,
+              filename: getFileName(facture.dateFacturation),
+              currency: '€',
+              metadata: {
+                importDate: new Date(),
+                version: 1
+              }
+            }
+          ],
+          fields,
+          {
+            identifiers: 'bouyg'
+          }
+        )
+      }
+      // End of first account fetched, we exit here to limit to 1 account
+      return
+    }
+  }
 })
 
 // Procedure to login to Bouygues website.
-function logIn(fields) {
-  const loginUrl = 'https://www.mon-compte.bouyguestelecom.fr/cas/login'
-  const billUrl =
-    'https://www.bouyguestelecom.fr/parcours/mes-factures/historique'
-
-  log('info', 'Logging in on Bouygues Website...')
-  return rq(loginUrl)
-    .then($ => {
-      // Extract hidden values
-      const lt = $('input[name="lt"]').val()
-      const execution = $('input[name="execution"]').val()
-
-      // Second request to log in (post the form).
-      const form = {
-        username: fields.login,
-        password: fields.password,
-        lt: lt,
-        execution: execution,
-        _eventId: 'submit'
-      }
-
-      const loginOptions = {
-        method: 'POST',
-        form,
-        uri: loginUrl
-      }
-      return rq(loginOptions)
-    })
-    .then($ => {
-      const badLogin = $('.error-icon').length > 0
-      if (badLogin) {
-        throw new Error('LOGIN_FAILED')
-      }
-      log('info', 'Successfully logged in.')
-
-      const $txtindispo = $('.txt-indispo')
-      if ($txtindispo.length) {
-        log(
-          'error',
-          $txtindispo
-            .text()
-            .trim()
-            .replace(/\n/g, ' ')
-            .replace(/ */, ' ')
+async function logIn({ login, password }) {
+  await signin({
+    url: 'https://www.mon-compte.bouyguestelecom.fr/cas/login',
+    formSelector: 'form',
+    formData: { username: login, password },
+    validate: (statusCode, $) => {
+      if (
+        $.html().includes(
+          'Votre identifiant ou votre mot de passe est incorrect'
         )
-        throw new Error('VENDOR_DOWN')
+      ) {
+        return false
+      } else {
+        return true
+      }
+    }
+  })
+  log('debug', `First login succeed, asking for more API rights`)
+  // Acredite token for downloading file via the API
+  const resp = await rq(
+    'https://oauth2.bouyguestelecom.fr/authorize?client_id=a360.bouyguestelecom.fr&response_type=id_token%20token&redirect_uri=https%3A%2F%2Fwww.bouyguestelecom.fr%2Fmon-compte%2F',
+    {
+      resolveWithFullResponse: true
+    }
+  )
+  log('debug', `Returned http code ${resp.statusCode}`)
+  log('debug', 'Extracting token from request')
+  if (resp.request.uri.href.includes('https://oauth2.bouyguestelecom')) {
+    log('error', 'Api right enhancement failed, redirect to auth')
+    throw 'SEEMS_BLOCKED'
+  } else {
+    const href = resp.request.uri.href.split('=')
+    const accessToken = href[1].split('&')[0]
+    rq = rq.defaults({
+      headers: {
+        Authorization: `Bearer ${accessToken}`
       }
     })
-    .then(() => {
-      log('info', 'Download bill HTML page...')
-      return rq(billUrl)
-    })
+    // Better extraction than split because base64 include some =
+    log('debug', 'Extracting personne from jsonwebtoken jwt')
+    const jwtString = resp.request.uri.href.match(/id_token=(.*)$/)[1]
+    const idPersonne = jwt(jwtString).id_personne
+    return idPersonne
+  }
 }
 
-// Procedure to extract bill data from the page.
-function parsePage($) {
-  let baseDlUrl =
-    'https://www.bouyguestelecom.fr/parcours/facture/download/index'
-  const entries = []
-  moment.locale('fr')
-
-  // We browse the bills table by processing each line one by one.
-  $('.download-facture').each(function() {
-    // Markup is not clean, we grab the date from the tag text.
-    let date = $(this)
-      .text()
-      .trim()
-      .split(' ')
-      .splice(0, 2)
-      .join(' ')
-      .trim()
-
-    // Amount is in a dirty field. We work on the tag text to extract data.
-    let amount = $(this)
-      .find('.small-prix')
-      .text()
-      .trim()
-    amount = parseFloat(amount.replace('€', ',').replace(',', '.'))
-
-    // Get the facture id and build the download url from it.
-    const id = $(this).attr('facture-id')
-    const params = { id }
-    const fileurl = `${baseDlUrl}?${qs.stringify(params)}`
-    date = moment(date, 'MMMM YYYY').add(14, 'days')
-
-    // Build bill object.
-    const bill = {
-      vendor: 'Bouygues Telecom',
-      date: date.toDate(),
-      amount,
-      fileurl,
-      filename: getFileName(date)
+function findLigneType(idCompte, contrats) {
+  for (let contrat of contrats.items) {
+    if (contrat._links.compteFacturation.href.includes(idCompte)) {
+      log('debug', `One 'compteFacturation' detected as ${contrat.typeLigne}`)
+      // Return type found : FIXE or MOBILE
+      return contrat.typeLigne
     }
-    entries.push(bill)
-  })
-
-  log('info', 'Bill data parsed.')
-
-  return Promise.resolve(entries)
+  }
+  // Else not found at all
+  return undefined
 }
 
 function getFileName(date) {
-  return `${date.format('YYYYMM')}_bouyguestelecom.pdf`
+  return `${moment(date).format('YYYYMM')}_bouyguestelecom.pdf`
 }

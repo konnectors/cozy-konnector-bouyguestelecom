@@ -16,7 +16,7 @@ const {
 } = require('cozy-konnector-libs')
 
 let rq = requestFactory({
-    debug: true,
+  //  debug: true,
   cheerio: false,
   json: true,
   jar: true

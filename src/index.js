@@ -12,6 +12,7 @@ const {
   saveBills,
   requestFactory,
   log,
+  errors,
   signin
 } = require('cozy-konnector-libs')
 
@@ -106,7 +107,7 @@ async function logIn({ login, password }) {
   log('debug', 'Extracting token from request')
   if (resp.request.uri.href.includes('https://oauth2.bouyguestelecom')) {
     log('error', 'Api right enhancement failed, redirect to auth')
-    throw 'SEEMS_BLOCKED'
+    throw new Error(errors.VENDOR_DOWN)
   } else {
     const href = resp.request.uri.href.split('=')
     const accessToken = href[1].split('&')[0]

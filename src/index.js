@@ -12,8 +12,8 @@ const {
   saveBills,
   requestFactory,
   log,
-  errors,
-  signin
+  signin,
+  cozyClient
 } = require('cozy-konnector-libs')
 
 let rq = requestFactory({
@@ -24,6 +24,9 @@ let rq = requestFactory({
 })
 
 module.exports = new BaseKonnector(async function fetch(fields) {
+  if (!fields.lastname) {
+    log('debug', 'Name not set, auth could fail trough some IP')
+  }
   const baseUrl = 'https://api.bouyguestelecom.fr'
   const idPersonne = await logIn(fields)
   log('info', 'Login succeed')
@@ -34,6 +37,21 @@ module.exports = new BaseKonnector(async function fetch(fields) {
   const contratsSignes = await rq(
     `${baseUrl}/personnes/${idPersonne}/contrats-signes`
   )
+
+  // Try extracting Name of personnes object
+  if (fields.lastname) {
+    log('debug', 'Lastname already set, do nothing')
+  } else {
+    log('debug', 'Extracting lastame from website')
+    const name = tryNameExtraction(personnes)
+    log('debug', 'Setting lastname in account')
+    try {
+      setName(name, this.accountId)
+    } catch (e) {
+      log('warn', 'Error when setting account')
+      log('warn', e.msg ? e.msg : e)
+    }
+  }
 
   for (let compte of comptes.comptesFacturation) {
     const ligneType = findLigneType(compte.id, contratsSignes)
@@ -78,11 +96,11 @@ module.exports = new BaseKonnector(async function fetch(fields) {
 })
 
 // Procedure to login to Bouygues website.
-async function logIn({ login, password }) {
+async function logIn({ login, password, lastname }) {
   await signin({
     url: 'https://www.mon-compte.bouyguestelecom.fr/cas/login',
     formSelector: 'form',
-    formData: { username: login, password },
+    formData: { username: login, password, lastname },
     validate: (statusCode, $) => {
       if (
         $.html().includes(
@@ -107,7 +125,7 @@ async function logIn({ login, password }) {
   log('debug', 'Extracting token from request')
   if (resp.request.uri.href.includes('https://oauth2.bouyguestelecom')) {
     log('error', 'Api right enhancement failed, redirect to auth')
-    throw new Error(errors.VENDOR_DOWN)
+    throw new Error('LOGIN_FAILED.NEEDS_SECRET')
   } else {
     const href = resp.request.uri.href.split('=')
     const accessToken = href[1].split('&')[0]
@@ -138,4 +156,18 @@ function findLigneType(idCompte, contrats) {
 
 function getFileName(date) {
   return `${moment(date).format('YYYYMM')}_bouyguestelecom.pdf`
+}
+
+function tryNameExtraction(personnes) {
+  if (personnes.nom.length > 0) {
+    return personnes.nom
+  } else {
+    log('warn', 'Name seems empty, impossible to set')
+  }
+}
+
+async function setName(name, accountId) {
+  let accountObj = await cozyClient.data.find('io.cozy.accounts', accountId)
+  accountObj.auth.lastname = name
+  await cozyClient.data.update('io.cozy.accounts', accountObj, accountObj)
 }

@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
+  "version": "1.9.1",
   "name": "Bouygues Telecom",
   "type": "konnector",
   "language": "node",

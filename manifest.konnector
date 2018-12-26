@@ -24,6 +24,9 @@
     "password": {
       "type": "password"
     },
+    "lastname": {
+      "type": "text"
+    },
     "advancedFields": {
       "folderPath": {
         "advanced": true,
@@ -56,7 +59,8 @@
       "description": "Required to get the account's data",
       "type": "io.cozy.accounts",
       "verbs": [
-        "GET"
+        "GET",
+        "PUT"
       ]
     }
   },

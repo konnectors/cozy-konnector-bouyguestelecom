@@ -84,7 +84,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
       await this.saveBills(
         [
           {
-            vendor: 'Bouygues Telecom',
+            vendor: 'Bouygues',
             date: new Date(facture.dateFacturation),
             amount: facture.mntTotFacture,
             vendorRef: facture.idFacture,
@@ -113,11 +113,11 @@ module.exports = new BaseKonnector(async function fetch(fields) {
         ],
         fields,
         {
-          identifiers: 'bouyg',
           sourceAccount: this.accountId,
           sourceAccountIdentifier: fields.login,
           fileIdAttributes: ['vendorRef'],
-          keys: ['vendorRef']
+          keys: ['vendorRef'],
+          linkBankOperations: false
         }
       )
     }

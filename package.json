@@ -4,7 +4,7 @@
   "description": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/konnectors/cozy-konnector-bouyguestelecom.git"
+    "url": "git@github.com:konnectors/cozy-konnector-bouyguestelecom.git"
   },
   "keywords": [],
   "author": "Cozy Cloud",
@@ -28,7 +28,6 @@
     "dev": "cozy-konnector-dev",
     "standalone": "cozy-konnector-standalone",
     "pretest": "npm run clean",
-    "test": "konitor testit .",
     "check": "konitor check .",
     "clean": "rm -rf ./data",
     "build": "webpack",

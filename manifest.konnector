@@ -34,29 +34,17 @@
       }
     }
   },
-  "locales": {
-    "fr": {
-      "short_description": "Récupère toutes vos factures Bouygues Telecom"
-    },
-    "en": {
-      "short_description": "Retrieves all your Bouygues Telecom invoices"
-    }
-  },
   "permissions": {
     "bank operations": {
-      "description": "Required to link bills to bank operations",
       "type": "io.cozy.bank.operations"
     },
     "bills": {
-      "description": "Required to save the bills data",
       "type": "io.cozy.bills"
     },
     "files": {
-      "description": "Required to save the bills",
       "type": "io.cozy.files"
     },
     "accounts": {
-      "description": "Required to get the account's data",
       "type": "io.cozy.accounts",
       "verbs": [
         "GET",
@@ -67,6 +55,44 @@
   "developer": {
     "name": "Cozy Cloud",
     "url": "https://cozy.io"
+  },
+  "locales": {
+    "fr": {
+      "short_description": "Récupère toutes vos factures Bouygues Telecom",
+      "long_description": "Récupère toutes vos factures Bouygues Telecom",
+      "permissions": {
+        "bank operations": {
+          "description": "Utilisé pour relier les factures à des operations bancaires"
+        },
+        "bills": {
+          "description": "Utilisé pour sauver les données des factures"
+        },
+        "files": {
+          "description": "Utilisé pour sauvegarder les factures"
+        },
+        "accounts": {
+          "description": "Utilisé pour obtenir les données du compte"
+        }
+      }
+    },
+    "en": {
+      "short_description": "Retrieves all your Bouygues Telecom invoices",
+      "long_description": "Retrieves all your Bouygues Telecom invoices",
+      "permissions": {
+        "bank operations": {
+          "description": "Required to link bank operations to bills"
+        },
+        "bills": {
+          "description": "Required to save the bills data"
+        },
+        "files": {
+          "description": "Required to save the bills"
+        },
+        "accounts": {
+          "description": "Required to get the account's data"
+        }
+      }
+    }
   },
   "banksTransactionRegExp": "\\bbouyg",
   "manifest_version": "2"

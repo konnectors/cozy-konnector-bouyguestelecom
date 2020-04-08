@@ -41,7 +41,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
   const comptes = await authRequest(`${baseUrl}${linkFactures}`)
   log(
     'info',
-    `${comptes.comptesFacturation.length} comptes found, maybe some are empties`
+    `${comptes.comptesFacturation.length} comptes found, maybe some are empty`
   )
 
   // Try extracting Name of personnes object
@@ -85,6 +85,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
           {
             vendor: 'Bouygues',
             date: new Date(facture.dateFacturation),
+            recurrence: 'monthly',
             amount: facture.mntTotFacture,
             vendorRef: facture.idFacture,
             fileurl: factureUrl,
@@ -112,8 +113,6 @@ module.exports = new BaseKonnector(async function fetch(fields) {
         ],
         fields,
         {
-          sourceAccount: this.accountId,
-          sourceAccountIdentifier: fields.login,
           fileIdAttributes: ['vendorRef'],
           keys: ['vendorRef'],
           linkBankOperations: false

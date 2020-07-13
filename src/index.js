@@ -11,7 +11,6 @@ const {
   BaseKonnector,
   requestFactory,
   log,
-  signin,
   cozyClient
 } = require('cozy-konnector-libs')
 
@@ -27,7 +26,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
     log('debug', 'Name not set, auth could fail trough some IP')
   }
   const baseUrl = 'https://api.bouyguestelecom.fr'
-  const { idPersonne, accessToken } = await logIn(fields)
+  const { idPersonne, accessToken } = await logIn.bind(this)(fields)
   log('info', 'Login succeed')
 
   const authRequest = request.defaults({
@@ -124,7 +123,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
 
 // Procedure to login to Bouygues website.
 async function logIn({ login, password, lastname }) {
-  await signin({
+  await this.signin({
     url: 'https://www.mon-compte.bouyguestelecom.fr/cas/login',
     formSelector: 'form',
     formData: { username: login, password, lastname },

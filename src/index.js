@@ -1,5 +1,3 @@
-// Force sentry DSN into environment variables
-// In the future, will be set by the stack
 process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://911e993f78084056acd7573dd2c02796:4516f6bd679d467db06aa35b84b3984b@sentry.cozycloud.cc/21'
@@ -62,6 +60,9 @@ module.exports = new BaseKonnector(async function fetch(fields) {
   for (let compte of comptes.comptesFacturation) {
     // Some compteFacturation are empty of 'factures'
     for (let facture of compte.factures) {
+      // ignore those bills which are not downloadable anymore
+      if (facture.soldeFacturePrec === undefined) continue
+
       // Fetch the facture url to get a json containing the definitive pdf url
       // If facturePDF is not define, it seems facturePDFDF is ok
       let result

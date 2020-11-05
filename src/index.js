@@ -80,6 +80,16 @@ module.exports = new BaseKonnector(async function fetch(fields) {
       prefixListOfImportedFiles.push(
         moment(facture.dateFacturation).format('YYYYMM') + '_'
       )
+      const isMobile = facture.lignes.some(val =>
+        ['06', '07'].includes(val.numeroLigne.substr(0, 2))
+      )
+      const isIsp = facture.lignes.some(
+        val => !['06', '07'].includes(val.numeroLigne.substr(0, 2))
+      )
+      const categories = []
+      // some bills are related to isp and phone
+      if (isIsp) categories.push('isp')
+      if (isMobile) categories.push('phone')
       await this.saveBills(
         [
           {
@@ -102,7 +112,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
                 datetimeLabel: 'issueDate',
                 contentAuthor: 'bouygues',
                 subClassification: 'invoice',
-                categories: ['phone'],
+                categories,
                 issueDate: new Date(facture.dateFacturation),
                 invoiceNumber: facture.idFacture,
                 contractReference: compte.id,
@@ -115,7 +125,13 @@ module.exports = new BaseKonnector(async function fetch(fields) {
         {
           fileIdAttributes: ['vendorRef'],
           keys: ['vendorRef'],
-          linkBankOperations: false
+          linkBankOperations: false,
+          shouldReplaceFile: (file, entry) => {
+            return (
+              entry.fileAttributes.metadata.categories.sort().join() !==
+              file.attributes.metadata.categories.sort().join()
+            )
+          }
         }
       )
     }

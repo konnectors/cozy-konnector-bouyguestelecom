@@ -3,7 +3,7 @@ process.env.SENTRY_DSN =
   'https://911e993f78084056acd7573dd2c02796:4516f6bd679d467db06aa35b84b3984b@sentry.cozycloud.cc/21'
 
 const moment = require('moment')
-const jwt = require('jwt-decode')
+const jwt = require('jwt-decode').default
 
 const {
   BaseKonnector,

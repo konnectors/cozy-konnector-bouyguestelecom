@@ -19,6 +19,8 @@ const request = requestFactory({
   jar: true
 })
 
+const get = require('lodash/get')
+
 module.exports = new BaseKonnector(async function fetch(fields) {
   if (!fields.lastname) {
     log('debug', 'Name not set, auth could fail trough some IP')
@@ -107,6 +109,7 @@ module.exports = new BaseKonnector(async function fetch(fields) {
             currency: '€',
             fileAttributes: {
               metadata: {
+                carbonCopy: true,
                 classification: 'invoicing',
                 datetime: new Date(facture.dateFacturation),
                 datetimeLabel: 'issueDate',
@@ -128,8 +131,12 @@ module.exports = new BaseKonnector(async function fetch(fields) {
           linkBankOperations: false,
           shouldReplaceFile: (file, entry) => {
             return (
-              entry.fileAttributes.metadata.categories.sort().join() !==
-              file.attributes.metadata.categories.sort().join()
+              get(entry, 'fileAttributes.metadata.categories', [])
+                .sort()
+                .join() !==
+              get(file, 'metadata.categories', [])
+                .sort()
+                .join()
             )
           }
         }

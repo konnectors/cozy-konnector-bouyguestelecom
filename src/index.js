@@ -5,7 +5,6 @@ process.env.SENTRY_DSN =
 const moment = require('moment')
 const jwt = require('jwt-decode').default
 
-
 const {
   BaseKonnector,
   requestFactory,
@@ -14,7 +13,7 @@ const {
 } = require('cozy-konnector-libs')
 
 // Importing models to get qualification by label
-const models  =  cozyClient.new.models
+const models = cozyClient.new.models
 const { Qualification } = models.document
 
 const request = requestFactory({
@@ -93,10 +92,10 @@ module.exports = new BaseKonnector(async function fetch(fields) {
       )
       let qualification = Qualification.getByLabel('telecom_invoice')
       // some bills are related to isp and phone, try a better qualification
-      if (isIsp) {
+      if (isIsp && !isMobile) {
         qualification = Qualification.getByLabel('isp_invoice')
       }
-      if (isMobile) {
+      if (isMobile && !isIsp) {
         qualification = Qualification.getByLabel('phone_invoice')
       }
 

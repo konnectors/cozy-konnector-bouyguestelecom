@@ -5,12 +5,17 @@ process.env.SENTRY_DSN =
 const moment = require('moment')
 const jwt = require('jwt-decode').default
 
+
 const {
   BaseKonnector,
   requestFactory,
   log,
   cozyClient
 } = require('cozy-konnector-libs')
+
+// Importing models to get qualification by label
+const models  =  cozyClient.new.models
+const { Qualification } = models.document
 
 const request = requestFactory({
   // debug: true,
@@ -86,10 +91,15 @@ module.exports = new BaseKonnector(async function fetch(fields) {
       const isIsp = facture.lignes.some(
         val => !['06', '07'].includes(val.numeroLigne.substr(0, 2))
       )
-      const categories = []
-      // some bills are related to isp and phone
-      if (isIsp) categories.push('isp')
-      if (isMobile) categories.push('phone')
+      let qualification = Qualification.getByLabel('telecom_invoice')
+      // some bills are related to isp and phone, try a better qualification
+      if (isIsp) {
+        qualification = Qualification.getByLabel('isp_invoice')
+      }
+      if (isMobile) {
+        qualification = Qualification.getByLabel('phone_invoice')
+      }
+
       await this.saveBills(
         [
           {
@@ -108,16 +118,14 @@ module.exports = new BaseKonnector(async function fetch(fields) {
             fileAttributes: {
               metadata: {
                 carbonCopy: true,
-                classification: 'invoicing',
                 datetime: new Date(facture.dateFacturation),
                 datetimeLabel: 'issueDate',
                 contentAuthor: 'bouygues',
-                subClassification: 'invoice',
-                categories,
                 issueDate: new Date(facture.dateFacturation),
                 invoiceNumber: facture.idFacture,
                 contractReference: compte.id,
-                isSubscription: true
+                isSubscription: true,
+                qualification
               }
             }
           }

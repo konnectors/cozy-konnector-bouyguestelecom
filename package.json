@@ -1,10 +1,10 @@
 {
-  "name": "template",
+  "name": "bouyguestelecom",
   "version": "1.0.0",
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
-    "url": "git@github.com:konnectors/template_ccc.git"
+    "url": "git@github.com:konnectors/cozy-konnector-bouyguestelecom.git"
   },
   "dependencies": {
     "@cozy/minilog": "1.0.0",

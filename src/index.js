@@ -5,7 +5,9 @@ const log = Minilog('ContentScript')
 Minilog.enable('bouyguestelecomCCC')
 
 const baseUrl = 'https://bouyguestelecom.fr'
-const dashboardUrl = 'https://www.bouyguestelecom.fr/mon-compte/dashboard'
+const monCompteUrl = 'https://www.bouyguestelecom.fr/mon-compte'
+const dashboardUrl = `${monCompteUrl}/dashboard`
+const apiUrl = 'https://api.bouyguestelecom.fr'
 
 let billsJSON = []
 // Stocker la référence à la fonction d'origine fetch
@@ -31,8 +33,6 @@ window.fetch = async (...args) => {
   return response
 }
 
-const apiUrl = 'https://api.bouyguestelecom.fr'
-
 class BouyguesTelecomContentScript extends ContentScript {
   async navigateToLoginForm() {
     this.log('info', 'navigateToLoginForm starts')
@@ -44,9 +44,9 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureAuthenticated(account) {
     this.log('info', 'EnsureAuthenticated starts')
-    // if (!account) {
-    //   await this.ensureNotAuthenticated()
-    // }
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
     await this.navigateToLoginForm()
     if (await this.runInWorker('checkAuthenticated')) {
       this.log('info', 'Auth detected')
@@ -73,10 +73,18 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureNotAuthenticated() {
     this.log('info', 'ensureNotAuthenticated starts')
-    await this.navigateToLoginForm()
+    await this.navigateToMonComptePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
       return true
+    }
+    const isPresent = await this.isElementInWorker('#notifications')
+    if (isPresent) {
+      await this.clickAndWait('#menu', '.navbar-dropdown-section')
+      await this.evaluateInWorker(() => {
+        document.querySelectorAll('a[class="navbar-item"]')[2].click()
+      })
+      await this.waitForElementInWorker('#menu')
     }
   }
 
@@ -206,6 +214,14 @@ class BouyguesTelecomContentScript extends ContentScript {
       document.querySelectorAll('.has-ending-arrow')[1].click()
     })
     await this.waitForElementInWorker('#page > section > .container')
+  }
+
+  async navigateToMonComptePage() {
+    await this.goto(monCompteUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#casiframe'),
+      this.waitForElementInWorker('#notifications')
+    ])
   }
 
   async fetchIdentity() {

@@ -10,6 +10,9 @@ const dashboardUrl = `${monCompteUrl}/dashboard`
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
 let billsJSON = []
+// Here we need to override the fetch function to intercept the bills data sent by the website
+// when we reach the bills page. Scraping is extremly tricky to achieve as there is no explicit selectors
+// we could use to be resilient to potential changes.
 // Stocker la référence à la fonction d'origine fetch
 const fetchOriginal = window.fetch
 

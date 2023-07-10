@@ -1,204 +1,384 @@
-process.env.SENTRY_DSN =
-  process.env.SENTRY_DSN ||
-  'https://911e993f78084056acd7573dd2c02796:4516f6bd679d467db06aa35b84b3984b@sentry.cozycloud.cc/21'
+import { ContentScript } from 'cozy-clisk/dist/contentscript'
+import { format } from 'date-fns'
+import Minilog from '@cozy/minilog'
+const log = Minilog('ContentScript')
+Minilog.enable('bouyguestelecomCCC')
 
-const moment = require('moment')
-const jwt = require('jwt-decode').default
+const baseUrl = 'https://bouyguestelecom.fr'
+const monCompteUrl = 'https://www.bouyguestelecom.fr/mon-compte'
+const dashboardUrl = `${monCompteUrl}/dashboard`
+const apiUrl = 'https://api.bouyguestelecom.fr'
 
-const {
-  BaseKonnector,
-  requestFactory,
-  log,
-  cozyClient
-} = require('cozy-konnector-libs')
+let billsJSON = []
+// Here we need to override the fetch function to intercept the bills data sent by the website
+// when we reach the bills page. Scraping is extremly tricky to achieve as there is no explicit selectors
+// we could use to be resilient to potential changes.
+// Stocker la référence à la fonction d'origine fetch
+const fetchOriginal = window.fetch
 
-// Importing models to get qualification by label
-const models = cozyClient.new.models
-const { Qualification } = models.document
-
-const request = requestFactory({
-  // debug: true,
-  cheerio: false,
-  json: true,
-  jar: true
-})
-
-module.exports = new BaseKonnector(async function fetch(fields) {
-  if (!fields.lastname) {
-    log('debug', 'Name not set, auth could fail trough some IP')
+// Remplacer la fonction fetch par une nouvelle fonction
+window.fetch = async (...args) => {
+  const response = await fetchOriginal(...args)
+  if (typeof args[0] === 'string' && args[0].includes('/graphql')) {
+    await response
+      .clone()
+      .json()
+      .then(body => {
+        billsJSON.push(body)
+        return response
+      })
+      .catch(err => {
+        // eslint-disable-next-line no-console
+        console.log(err)
+        return response
+      })
   }
-  const baseUrl = 'https://api.bouyguestelecom.fr'
-  const { idPersonne, accessToken } = await logIn.bind(this)(fields)
-  log('info', 'Login succeed')
+  return response
+}
 
-  const authRequest = request.defaults({
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  })
-
-  const personnes = await authRequest(`${baseUrl}/personnes/${idPersonne}`)
-  const linkFactures = personnes._links.factures.href
-  const comptes = await authRequest(`${baseUrl}${linkFactures}`)
-  log(
-    'info',
-    `${comptes.comptesFacturation.length} comptes found, maybe some are empty`
-  )
-
-  // Try extracting Name of personnes object
-  if (fields.lastname) {
-    log('debug', 'Lastname already set, do nothing')
-  } else {
-    log('debug', 'Extracting lastame from website')
-    const name = tryNameExtraction(personnes)
-    log('debug', 'Setting lastname in account')
-    try {
-      setName(name, this.accountId)
-    } catch (e) {
-      log('warn', 'Error when setting account')
-      log('warn', e.msg ? e.msg : e)
-    }
+class BouyguesTelecomContentScript extends ContentScript {
+  async navigateToLoginForm() {
+    this.log('info', 'navigateToLoginForm starts')
+    await this.goto(baseUrl)
+    await this.waitForElementInWorker('#login')
+    await this.waitForElementInWorker('#menu')
+    await this.clickAndWait('#login', '#bytelid_partial_acoMenu_login')
   }
 
-  const prefixListOfImportedFiles = []
-  for (let compte of comptes.comptesFacturation) {
-    // Some compteFacturation are empty of 'factures'
-    for (let facture of compte.factures) {
-      // ignore those bills which are not downloadable anymore
-      if (facture.soldeFacturePrec === undefined) continue
+  async ensureAuthenticated(account) {
+    this.log('info', 'EnsureAuthenticated starts')
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
+    await this.navigateToLoginForm()
+    if (await this.runInWorker('checkAuthenticated')) {
+      this.log('info', 'Auth detected')
+      return true
+    }
+    this.log('info', 'No auth detected')
+    // let credentials = await this.getCredentials()
+    // if (credentials && credentials.email && credentials.password) {
+    //   try {
+    //     this.log('info', 'Got credentials, trying autologin')
+    //     await this.tryAutoLogin(credentials)
+    //   } catch (error) {
+    //     this.log('warn', 'autoLogin error' + error.message)
+    //     await this.showLoginFormAndWaitForAuthentication()
+    //   }
+    // } else {
+    //   this.log('info', 'No credentials found, waiting for user input')
+    //   await this.showLoginFormAndWaitForAuthentication()
+    // }
+    this.log('info', 'No credentials found, waiting for user input')
+    await this.showLoginFormAndWaitForAuthentication()
+    return true
+  }
 
-      // Fetch the facture url to get a json containing the definitive pdf url
-      // If facturePDF is not define, it seems facturePDFDF is ok
-      let result
-      if (facture._links.facturePDF !== undefined) {
-        result = await authRequest(
-          `${baseUrl}${facture._links.facturePDF.href}`
-        )
-      } else {
-        result = await authRequest(
-          `${baseUrl}${facture._links.facturePDFDF.href}`
-        )
-      }
-      const factureUrl = `${baseUrl}${result._actions.telecharger.action}`
-      // Call each time because of quick link expiration (~1min)
-      prefixListOfImportedFiles.push(
-        moment(facture.dateFacturation).format('YYYYMM') + '_'
-      )
-      const isMobile = facture.lignes.some(val =>
-        ['06', '07'].includes(val.numeroLigne.substr(0, 2))
-      )
-      const isIsp = facture.lignes.some(
-        val => !['06', '07'].includes(val.numeroLigne.substr(0, 2))
-      )
-      let qualification = Qualification.getByLabel('telecom_invoice')
-      // some bills are related to isp and phone, try a better qualification
-      if (isIsp && !isMobile) {
-        qualification = Qualification.getByLabel('isp_invoice')
-      }
-      if (isMobile && !isIsp) {
-        qualification = Qualification.getByLabel('phone_invoice')
-      }
-
-      await this.saveBills(
-        [
-          {
-            vendor: 'Bouygues',
-            date: new Date(facture.dateFacturation),
-            recurrence: 'monthly',
-            amount: facture.mntTotFacture,
-            vendorRef: facture.idFacture,
-            fileurl: factureUrl,
-            filename: getFileName(
-              facture.dateFacturation,
-              facture.mntTotFacture,
-              facture.idFacture
-            ),
-            currency: '€',
-            fileAttributes: {
-              metadata: {
-                carbonCopy: true,
-                datetime: new Date(facture.dateFacturation),
-                datetimeLabel: 'issueDate',
-                contentAuthor: 'bouygues',
-                issueDate: new Date(facture.dateFacturation),
-                invoiceNumber: facture.idFacture,
-                contractReference: compte.id,
-                isSubscription: true,
-                qualification
-              }
-            }
-          }
-        ],
-        fields,
-        {
-          fileIdAttributes: ['vendorRef'],
-          keys: ['vendorRef'],
-          linkBankOperations: false
-        }
-      )
+  async ensureNotAuthenticated() {
+    this.log('info', 'ensureNotAuthenticated starts')
+    await this.navigateToMonComptePage()
+    const authenticated = await this.runInWorker('checkAuthenticated')
+    if (!authenticated) {
+      return true
+    }
+    const isPresent = await this.isElementInWorker('#notifications')
+    if (isPresent) {
+      await this.clickAndWait('#menu', '.navbar-dropdown-section')
+      await this.evaluateInWorker(() => {
+        document.querySelectorAll('a[class="navbar-item"]')[2].click()
+      })
+      await this.waitForElementInWorker('#menu')
     }
   }
-})
 
-// Procedure to login to Bouygues website.
-async function logIn({ login, password, lastname }) {
-  await this.signin({
-    url: 'https://www.mon-compte.bouyguestelecom.fr/cas/login',
-    formSelector: 'form',
-    formData: { username: login, password, lastname },
-    simple: false,
-    validate: (statusCode, $) => {
+  async checkAuthenticated() {
+    this.log('info', 'checkAuthenticated starts')
+    const passwordField = document.querySelector('#password')
+    const loginField = document.querySelector('#username')
+    if (passwordField && loginField) {
+      const userCredentials = await this.findAndSendCredentials.bind(this)(
+        loginField,
+        passwordField
+      )
+      this.log('info', "Sending user's credentials to Pilot")
+      this.sendToPilot({
+        userCredentials
+      })
+    }
+    if (
+      document.location.href === dashboardUrl &&
+      document.querySelector('#notifications')
+    ) {
+      this.log('info', 'Auth check succeeded')
+      return true
+    }
+    return false
+  }
+
+  async findAndSendCredentials(loginField, passwordField) {
+    this.log('info', 'findAndSendCredentials starts')
+    let userLogin = loginField.value
+    let userPassword = passwordField.value
+    const userCredentials = {
+      email: userLogin,
+      password: userPassword
+    }
+    return userCredentials
+  }
+
+  async showLoginFormAndWaitForAuthentication() {
+    this.log('info', 'showLoginFormAndWaitForAuthentication start')
+    await this.setWorkerState({ visible: true })
+    await this.runInWorkerUntilTrue({
+      method: 'waitForAuthenticated'
+    })
+    await this.setWorkerState({ visible: false })
+  }
+
+  async getUserDataFromWebsite() {
+    this.log('info', 'getUserDataFromWebsite starts')
+    await this.navigateToInfosPage()
+    await this.runInWorker('fetchIdentity')
+    await this.saveIdentity(this.store.userIdentity)
+    return {
+      sourceAccountIdentifier: this.store.userIdentity.email
+        ? this.store.userIdentity.email
+        : 'defaultTemplateSourceAccountIdentifier'
+    }
+  }
+
+  async fetch(context) {
+    this.log('info', 'fetch starts')
+    const moreBillsButtonSelector =
+      '#page > section > .container > .has-text-centered > a'
+    await this.navigateToBillsPage()
+    await this.waitForElementInWorker('div[class="box is-loaded"]')
+    await this.runInWorkerUntilTrue({
+      method: 'checkInterception',
+      args: [1]
+    })
+
+    let moreBills = true
+    let lap = 0
+    while (moreBills) {
+      lap++
+      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
+      if (moreBills) {
+        await this.runInWorker('click', moreBillsButtonSelector)
+        await this.runInWorkerUntilTrue({
+          method: 'checkInterception',
+          args: [lap + 1]
+        })
+      }
+    }
+    const neededIndex = this.store.arrayLength - 1
+    const pageBills = await this.runInWorker('computeBills', {
+      lap,
+      neededIndex
+    })
+    for (const oneBill of pageBills) {
+      const billToDownload = await this.runInWorker('getDownloadHref', oneBill)
       if (
-        $.html().includes(
-          'Votre identifiant ou votre mot de passe est incorrect'
-        )
+        billToDownload.lineNumber.startsWith('06') ||
+        billToDownload.lineNumber.startsWith('07')
       ) {
-        return false
+        await this.saveBills([billToDownload], {
+          context,
+          fileIdAttributes: ['vendorRef'],
+          contentType: 'application/pdf',
+          qualificationLabel: 'phone_invoice',
+          subPath: `${billToDownload.lineNumber}`
+        })
       } else {
-        return true
+        await this.saveBills([billToDownload], {
+          context,
+          fileIdAttributes: ['vendorRef'],
+          contentType: 'application/pdf',
+          qualificationLabel: 'isp_invoice',
+          subPath: `${billToDownload.lineNumber}`
+        })
       }
     }
-  })
-  log('debug', `First login succeed, asking for more API rights`)
-  // Acredite token for downloading file via the API
-  const resp = await request(
-    'https://oauth2.bouyguestelecom.fr/authorize?client_id=a360.bouyguestelecom.fr&response_type=id_token%20token&redirect_uri=https%3A%2F%2Fwww.bouyguestelecom.fr%2Fmon-compte%2F',
-    {
-      resolveWithFullResponse: true
+  }
+
+  async navigateToInfosPage() {
+    this.log('info', 'navigateToInfosPage starts')
+    await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
+    await this.clickAndWait(
+      'div[href="/mon-compte/infosperso"] a',
+      '.personalInfosAccountDetails'
+    )
+  }
+
+  async navigateToBillsPage() {
+    this.log('info', 'navigateToBillsPage starts')
+    await this.clickAndWait('#menu', '.has-ending-arrow')
+    await this.evaluateInWorker(() => {
+      document.querySelectorAll('.has-ending-arrow')[1].click()
+    })
+    await this.waitForElementInWorker('#page > section > .container')
+  }
+
+  async navigateToMonComptePage() {
+    await this.goto(monCompteUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#casiframe'),
+      this.waitForElementInWorker('#notifications')
+    ])
+  }
+
+  async fetchIdentity() {
+    this.log('info', 'fetchIdentity starts')
+    let mailAddress
+    let phoneNumber
+    const infosElements = document.querySelectorAll(
+      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    )
+    const elementsArray = Array.from(infosElements)
+    const infosArray = []
+    for (const info of elementsArray) {
+      const spans = info.querySelectorAll('span')
+      if (
+        spans[0].textContent.includes('Email') ||
+        spans[0].textContent.includes('Numéro')
+      ) {
+        // Here we select index 1 because index 0 is the section's name
+        const spanInfo = spans[1].textContent
+        infosArray.push(spanInfo)
+      }
+      continue
     }
-  )
-  log('debug', `Returned http code ${resp.statusCode}`)
-  log('debug', 'Extracting token from request')
-  if (resp.request.uri.href.includes('https://oauth2.bouyguestelecom')) {
-    log('error', 'Api right enhancement failed, redirect to auth')
-    throw new Error('LOGIN_FAILED.NEEDS_SECRET')
-  } else {
-    const href = resp.request.uri.href.split('=')
-    const accessToken = href[1].split('&')[0]
-    // Better extraction than split because base64 include some =
-    log('debug', 'Extracting personne from jsonwebtoken jwt')
-    const jwtString = resp.request.uri.href.match(/id_token=(.*)$/)[1]
-    const idPersonne = jwt(jwtString).id_personne
-    return { idPersonne, accessToken }
+    mailAddress = infosArray[0]
+    phoneNumber = infosArray[1].replace(/ /g, '')
+    const firstName = document.querySelector('.firstName').textContent
+    const familyName = document.querySelector('.name').textContent
+    const addressElement = document.querySelector(
+      '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+    ).innerHTML
+    const [street, postCodeAndCity, country] = addressElement.split('<br>')
+    const [postCode, city] = postCodeAndCity.split(' ')
+    const userIdentity = {
+      email: mailAddress,
+      phone: [
+        {
+          type: phoneNumber.startsWith('06' || '07') ? 'mobile' : 'home',
+          number: phoneNumber
+        }
+      ],
+      name: {
+        givenName: firstName,
+        familyName
+      },
+      address: {
+        street,
+        postCode,
+        city,
+        country,
+        formattedAddress: addressElement.replace(/<br>/g, ' ')
+      }
+    }
+    await this.sendToPilot({ userIdentity })
+    this.log('info', `${JSON.stringify(userIdentity)}`)
+  }
+
+  async checkInterception(number) {
+    this.log('info', 'checkInterception starts')
+    this.log('info', `number in checkInterception : ${number}`)
+    if (billsJSON.length >= number) {
+      await this.sendToPilot({ arrayLength: billsJSON.length })
+      return true
+    }
+    return false
+  }
+
+  async computeBills(infos) {
+    this.log('info', 'computeBills starts')
+    const computedBills = []
+    let comptesFacturation =
+      billsJSON[infos.neededIndex].data.consulterPersonne.factures
+        .comptesFacturation
+
+    let foundBills = []
+    for (let i = 0; i < comptesFacturation.length; i++) {
+      const billsForOneLine = comptesFacturation[i].factures
+      billsForOneLine.forEach(bill => {
+        foundBills.push(bill)
+      })
+    }
+
+    for (const foundBill of foundBills) {
+      const fileHref = foundBill.facturePDF[0].href
+      const amount = foundBill.mntTotFacture
+      const foundDate = foundBill.dateFacturation
+      const vendor = 'Bouygues Telecom'
+      const date = new Date(foundDate)
+      const formattedDate = format(date, 'yyyy-MM-dd')
+      const currency = '€'
+      const lineNumber = foundBill.lignes[0].numeroLigne
+      let computedBill = {
+        lineNumber,
+        amount,
+        currency,
+        filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
+        fileurl: `${apiUrl}${fileHref}`,
+        date,
+        vendor: 'Bouygues Telecom',
+        vendorRef: foundBill.id,
+        fileAttributes: {
+          metadata: {
+            contentAuthor: 'bouyguestelecom.fr',
+            datetime: date,
+            datetimeLabel: 'issueDate',
+            isSubscription: true,
+            issueDate: new Date(),
+            cabonCopy: true
+          }
+        }
+      }
+      computedBills.push(computedBill)
+    }
+    return computedBills
+  }
+
+  async getDownloadHref(bill) {
+    this.log('info', 'getDownloadHref starts')
+    const hrefAndToken = await this.getFileDownloadHref(bill.fileurl)
+    let goodBill = {
+      ...bill
+    }
+    goodBill.fileurl = `${apiUrl}${hrefAndToken.downloadHref}`
+    goodBill.requestOptions = {
+      headers: {
+        Authorization: `BEARER ${hrefAndToken.token}`
+      }
+    }
+    return goodBill
+  }
+
+  async getFileDownloadHref(url) {
+    this.log('info', 'getFileDownloadHref starts')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    const response = await window.fetch(url, {
+      headers: {
+        Authorization: `BEARER ${token}`
+      }
+    })
+    const data = await response.json()
+    const downloadHref = data._actions.telecharger.action
+    return { downloadHref, token }
   }
 }
 
-function getFileName(date, amount, factureId) {
-  return `${moment(date).format('YYYYMM')}_bouygues_${amount.toFixed(
-    2
-  )}€_${factureId}.pdf`
-}
-
-function tryNameExtraction(personnes) {
-  if (personnes.nom.length > 0) {
-    return personnes.nom
-  } else {
-    log('warn', 'Name seems empty, impossible to set')
-  }
-}
-
-async function setName(name, accountId) {
-  let accountObj = await cozyClient.data.find('io.cozy.accounts', accountId)
-  accountObj.auth.lastname = name
-  await cozyClient.data.update('io.cozy.accounts', accountObj, accountObj)
-}
+const connector = new BouyguesTelecomContentScript()
+connector
+  .init({
+    additionalExposedMethodsNames: [
+      'fetchIdentity',
+      'checkInterception',
+      'computeBills',
+      'getDownloadHref'
+    ]
+  })
+  .catch(err => {
+    log.warn(err)
+  })

@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "name": "Bouygues Telecom",
   "type": "konnector",
   "language": "node",
@@ -12,7 +12,7 @@
     "phone_invoice",
     "isp_invoice"
   ],
-  "fields": { },
+  "fields": {},
   "clientSide": true,
   "langs": [
     "fr",

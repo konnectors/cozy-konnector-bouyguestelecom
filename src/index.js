@@ -1,11 +1,12 @@
 import { ContentScript } from 'cozy-clisk/dist/contentscript'
 import { format } from 'date-fns'
+import waitFor, { TimeoutError } from 'p-wait-for'
 import Minilog from '@cozy/minilog'
 const log = Minilog('ContentScript')
 Minilog.enable('bouyguestelecomCCC')
 
 const baseUrl = 'https://bouyguestelecom.fr'
-const monCompteUrl = 'https://www.bouyguestelecom.fr/mon-compte'
+const monCompteUrl = `${baseUrl}/mon-compte`
 const dashboardUrl = `${monCompteUrl}/dashboard`
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
@@ -37,40 +38,56 @@ window.fetch = async (...args) => {
 }
 
 class BouyguesTelecomContentScript extends ContentScript {
-  async navigateToLoginForm() {
-    this.log('info', 'navigateToLoginForm starts')
+  async navigateToBasePage() {
+    this.log('info', 'navigateToBasePage starts')
     await this.goto(baseUrl)
-    await this.waitForElementInWorker('#login')
-    await this.waitForElementInWorker('#menu')
-    await this.clickAndWait('#login', '#bytelid_partial_acoMenu_login')
+    await Promise.all([
+      this.waitForElementInWorker('#login'),
+      this.waitForElementInWorker('#menu')
+    ])
   }
 
-  async ensureAuthenticated(account) {
+  async navigateToLoginForm() {
+    this.log('info', 'navigateToLoginForm starts')
+    await this.runInWorkerUntilTrue({ method: 'makeLoginFormVisible' })
+  }
+
+  async ensureAuthenticated({ account }) {
     this.log('info', 'EnsureAuthenticated starts')
-    if (!account) {
-      await this.ensureNotAuthenticated()
-    }
+    let srcFromIframe
+    // if (!account) {
+    //   await this.ensureNotAuthenticated()
+    // }
+    await this.navigateToBasePage()
     await this.navigateToLoginForm()
     if (await this.runInWorker('checkAuthenticated')) {
       this.log('info', 'Auth detected')
       return true
     }
     this.log('info', 'No auth detected')
-    // let credentials = await this.getCredentials()
-    // if (credentials && credentials.email && credentials.password) {
-    //   try {
-    //     this.log('info', 'Got credentials, trying autologin')
-    //     await this.tryAutoLogin(credentials)
-    //   } catch (error) {
-    //     this.log('warn', 'autoLogin error' + error.message)
-    //     await this.showLoginFormAndWaitForAuthentication()
-    //   }
-    // } else {
-    //   this.log('info', 'No credentials found, waiting for user input')
-    //   await this.showLoginFormAndWaitForAuthentication()
-    // }
+    srcFromIframe = await this.evaluateInWorker(() => {
+      return document
+        .querySelector('#bytelid_partial_acoMenu_login')
+        .getAttribute('src')
+    })
+    await this.goto(srcFromIframe)
+    await this.waitForElementInWorker('#username')
+    let credentials = await this.getCredentials()
+    if (credentials && credentials.email && credentials.password) {
+      try {
+        this.log('info', 'Got credentials, trying autologin')
+        await this.tryAutoLogin(credentials)
+      } catch (error) {
+        this.log('warn', 'autoLogin error' + error.message)
+        await this.showLoginFormAndWaitForAuthentication()
+      }
+    } else {
+      this.log('info', 'No credentials found, waiting for user input')
+      await this.showLoginFormAndWaitForAuthentication()
+    }
     this.log('info', 'No credentials found, waiting for user input')
     await this.showLoginFormAndWaitForAuthentication()
+    await this.navigateToMonComptePage()
     return true
   }
 
@@ -112,6 +129,20 @@ class BouyguesTelecomContentScript extends ContentScript {
       this.log('info', 'Auth check succeeded')
       return true
     }
+    const nameElement = document.querySelector('div[data-id-info="prenom"]')
+    if (nameElement) {
+      if (nameElement.textContent === 'Mon compte') {
+        this.log('info', 'Not logged, returning false')
+        return false
+      }
+    }
+    const bodyElement = document.querySelector('body')
+    if (bodyElement) {
+      if (bodyElement.textContent === '') {
+        this.log('info', 'Auth with Iframe detected')
+        return true
+      }
+    }
     return false
   }
 
@@ -149,6 +180,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async fetch(context) {
     this.log('info', 'fetch starts')
+    await this.saveCredentials(this.store.userCredentials)
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()
@@ -199,6 +231,53 @@ class BouyguesTelecomContentScript extends ContentScript {
         })
       }
     }
+  }
+
+  async tryAutoLogin(credentials) {
+    this.log('info', 'TryAutologin starts')
+    await this.autoLogin(credentials)
+    await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
+  }
+
+  async autoLogin(credentials) {
+    this.log('info', 'AutoLogin starts')
+    await this.waitForElementInWorker('#username')
+    await this.runInWorker('fillText', '#username', credentials.email)
+    await this.runInWorker('fillText', '#password', credentials.password)
+    await this.runInWorker('click', 'button')
+  }
+
+  async makeLoginFormVisible() {
+    await waitFor(
+      () => {
+        const loginFormButton = document.querySelector('#login')
+        loginFormButton.click()
+
+        if (document.querySelector('#bytelid_partial_acoMenu_login')) {
+          return true
+        } else {
+          this.log(
+            'info',
+            'Cannot find loginfForm, closing pop over and returning false'
+          )
+          const closeButton = document.querySelector(
+            'button[data-real-class="modal-close is-large"]'
+          )
+          closeButton.click()
+          return false
+        }
+      },
+      {
+        interval: 1000,
+        timeout: {
+          milliseconds: 15000,
+          message: new TimeoutError(
+            'makeLoginFormVisible timed out after 15000ms'
+          )
+        }
+      }
+    )
+    return true
   }
 
   async navigateToInfosPage() {
@@ -376,7 +455,8 @@ connector
       'fetchIdentity',
       'checkInterception',
       'computeBills',
-      'getDownloadHref'
+      'getDownloadHref',
+      'makeLoginFormVisible'
     ]
   })
   .catch(err => {

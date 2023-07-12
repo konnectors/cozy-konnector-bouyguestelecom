@@ -55,9 +55,9 @@ class BouyguesTelecomContentScript extends ContentScript {
   async ensureAuthenticated({ account }) {
     this.log('info', 'EnsureAuthenticated starts')
     let srcFromIframe
-    // if (!account) {
-    //   await this.ensureNotAuthenticated()
-    // }
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
     await this.navigateToBasePage()
     await this.navigateToLoginForm()
     if (await this.runInWorker('checkAuthenticated')) {
@@ -141,9 +141,53 @@ class BouyguesTelecomContentScript extends ContentScript {
       if (bodyElement.textContent === '') {
         this.log('info', 'Auth with Iframe detected')
         return true
+      } else if (
+        document.querySelector('.radioTile') ||
+        document.querySelector('.otp')
+      ) {
+        await this.checkIfAskingForCode()
+        return true
       }
     }
+
     return false
+  }
+
+  async checkIfAskingForCode() {
+    const radioTile = document.querySelector('.radio-tile')
+    const codeInputs = document.querySelector('.otp')
+    if (radioTile || codeInputs) {
+      this.log('info', 'Website is asking for a confirmation code')
+      await this.waitForUserCode()
+    }
+  }
+
+  async waitForUserCode() {
+    this.log('info', 'Waiting for confirmation code')
+    await waitFor(
+      () => {
+        const perfectNotification = document.querySelector('.is-level-2')
+        if (perfectNotification) {
+          if (perfectNotification.textContent === "C'est parfait") {
+            this.log('info', 'User has filled his code, continue')
+            document.querySelector('a').click()
+            return true
+          }
+        }
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: {
+          // Here it has been agreed we're using Infinity timeout as we're dependant on the user's input to continue the execution and we cannot cut off the execution while the user is waiting/writing its code.
+          milliseconds: Infinity,
+          message: new TimeoutError(
+            'waitForUserCode timed out after 5 minutes, it may be because the user did not fill in the confirmation code in timely manners or because the awaited selector is missing'
+          )
+        }
+      }
+    )
+    return true
   }
 
   async findAndSendCredentials(loginField, passwordField) {
@@ -410,7 +454,7 @@ class BouyguesTelecomContentScript extends ContentScript {
             datetimeLabel: 'issueDate',
             isSubscription: true,
             issueDate: new Date(),
-            cabonCopy: true
+            carbonCopy: true
           }
         }
       }

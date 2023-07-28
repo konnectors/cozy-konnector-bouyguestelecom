@@ -86,7 +86,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     }
     this.log('info', 'No auth detected')
     await this.navigateToLoginForm()
-    srcFromIframe = await this.evaluateInWorker(() => {
+    srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
       return document
         .querySelector('#bytelid_partial_acoMenu_login')
         .getAttribute('src')
@@ -128,7 +128,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     await this.clickAndWait('[data-id-logout]', '#menu')
 
     // will reload the page after 5s if needed this can confirm the deconnexion in degraded cases
-    await this.evaluateInWorker(() => {
+    await this.evaluateInWorker(function reloadAfter5s() {
       window.setTimeout(() => window.location.reload(), 5000)
     })
     await this.runInWorkerUntilTrue({

@@ -7,7 +7,7 @@ Minilog.enable('bouyguestelecomCCC')
 
 const baseUrl = 'https://bouyguestelecom.fr'
 const monCompteUrl = `${baseUrl}/mon-compte`
-const dashboardUrl = `${monCompteUrl}/dashboard`
+const successUrlPattern = 'PICASSO-FRONT'
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
 let billsJSON = []
@@ -41,10 +41,31 @@ class BouyguesTelecomContentScript extends ContentScript {
   async navigateToBasePage() {
     this.log('info', 'navigateToBasePage starts')
     await this.goto(baseUrl)
-    await Promise.all([
-      this.waitForElementInWorker('#login'),
-      this.waitForElementInWorker('#menu')
-    ])
+    await this.waitForElementInWorker('[data-menu-open=user]')
+    await this.runInWorker('waitForLocalStorage')
+  }
+
+  /**
+   * Wait for a key in localStorage to be present to be sure a page is fully loaded
+   */
+  async waitForLocalStorage() {
+    await waitFor(
+      () => {
+        const result = Boolean(
+          window.localStorage.getItem('bytel-tag-commander/oauth')
+        )
+        return result
+      },
+      {
+        interval: 100,
+        timeout: {
+          milliseconds: 1000,
+          message: new TimeoutError(
+            'waitForLocalStorage timed out after 1 second'
+          )
+        }
+      }
+    )
   }
 
   async navigateToLoginForm() {
@@ -59,12 +80,12 @@ class BouyguesTelecomContentScript extends ContentScript {
       await this.ensureNotAuthenticated()
     }
     await this.navigateToBasePage()
-    await this.navigateToLoginForm()
     if (await this.runInWorker('checkAuthenticated')) {
       this.log('info', 'Auth detected')
       return true
     }
     this.log('info', 'No auth detected')
+    await this.navigateToLoginForm()
     srcFromIframe = await this.evaluateInWorker(() => {
       return document
         .querySelector('#bytelid_partial_acoMenu_login')
@@ -85,27 +106,34 @@ class BouyguesTelecomContentScript extends ContentScript {
       this.log('info', 'No credentials found, waiting for user input')
       await this.showLoginFormAndWaitForAuthentication()
     }
-    this.log('info', 'No credentials found, waiting for user input')
-    await this.showLoginFormAndWaitForAuthentication()
-    await this.navigateToMonComptePage()
     return true
   }
 
   async ensureNotAuthenticated() {
     this.log('info', 'ensureNotAuthenticated starts')
-    await this.navigateToMonComptePage()
+    await this.navigateToBasePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
       return true
     }
-    const isPresent = await this.isElementInWorker('#notifications')
-    if (isPresent) {
-      await this.clickAndWait('#menu', '.navbar-dropdown-section')
-      await this.evaluateInWorker(() => {
-        document.querySelectorAll('a[class="navbar-item"]')[2].click()
-      })
-      await this.waitForElementInWorker('#menu')
+
+    if ((await this.isElementInWorker('#user')) === false) {
+      throw new Error(
+        'Could not disconnect from Bouygues telecom, no menu is available in the current page : ' +
+          document.location.href
+      )
     }
+
+    await this.clickAndWait('[data-menu-open=user]', '[data-id-logout]')
+    await this.clickAndWait('[data-id-logout]', '#menu')
+
+    // will reload the page after 5s if needed this can confirm the deconnexion in degraded cases
+    await this.evaluateInWorker(() => {
+      window.setTimeout(() => window.location.reload(), 5000)
+    })
+    await this.runInWorkerUntilTrue({
+      method: 'waitForNotAuthenticated'
+    })
   }
 
   async checkAuthenticated() {
@@ -122,35 +150,35 @@ class BouyguesTelecomContentScript extends ContentScript {
         userCredentials
       })
     }
-    if (
-      document.location.href === dashboardUrl &&
-      document.querySelector('#notifications')
-    ) {
-      this.log('info', 'Auth check succeeded')
-      return true
-    }
-    const nameElement = document.querySelector('div[data-id-info="prenom"]')
-    if (nameElement) {
-      if (nameElement.textContent === 'Mon compte') {
-        this.log('info', 'Not logged, returning false')
-        return false
-      }
-    }
-    const bodyElement = document.querySelector('body')
-    if (bodyElement) {
-      if (bodyElement.textContent === '') {
-        this.log('info', 'Auth with Iframe detected')
-        return true
-      } else if (
-        document.querySelector('.radioTile') ||
-        document.querySelector('.otp')
-      ) {
-        await this.checkIfAskingForCode()
-        return true
-      }
+
+    if (document.location.href.includes(successUrlPattern)) {
+      // This url appears when the login has been successfull in the iframe
+      // we then redirect the base url to let the next checkAuthenticated validate the login
+      this.log(
+        'info',
+        'found success url pattern, redirecting to base page: ' +
+          document.location.href
+      )
+      document.location.href = baseUrl
+      return false
     }
 
-    return false
+    try {
+      const tokenExpire = JSON.parse(
+        localStorage.getItem('bytel-tag-commander/jwt-data')
+      )?.exp
+
+      if (!tokenExpire) {
+        this.log('debug', 'checkauthenticated no tokenExpire')
+        return false
+      }
+
+      const result = Date.now() < tokenExpire * 1000
+      return result
+    } catch (err) {
+      this.log('debug', 'checkauthenticated error', err)
+      return false
+    }
   }
 
   async checkIfAskingForCode() {
@@ -212,6 +240,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async getUserDataFromWebsite() {
     this.log('info', 'getUserDataFromWebsite starts')
+    await this.navigateToMonComptePage()
     await this.navigateToInfosPage()
     await this.runInWorker('fetchIdentity')
     if (!this.store.userIdentity?.email) {
@@ -507,7 +536,8 @@ connector
       'checkInterception',
       'computeBills',
       'getDownloadHref',
-      'makeLoginFormVisible'
+      'makeLoginFormVisible',
+      'waitForLocalStorage'
     ]
   })
   .catch(err => {

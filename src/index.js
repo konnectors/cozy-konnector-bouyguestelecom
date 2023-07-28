@@ -214,11 +214,13 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', 'getUserDataFromWebsite starts')
     await this.navigateToInfosPage()
     await this.runInWorker('fetchIdentity')
-    await this.saveIdentity(this.store.userIdentity)
+    if (!this.store.userIdentity?.email) {
+      throw new Error(
+        'getUserDataFromWebsite: Could not find email in user identity'
+      )
+    }
     return {
       sourceAccountIdentifier: this.store.userIdentity.email
-        ? this.store.userIdentity.email
-        : 'defaultTemplateSourceAccountIdentifier'
     }
   }
 
@@ -296,7 +298,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     await waitFor(
       () => {
         const loginFormButton = document.querySelector('#login')
-        loginFormButton.click()
+        if (loginFormButton) loginFormButton.click()
 
         if (document.querySelector('#bytelid_partial_acoMenu_login')) {
           return true
@@ -332,6 +334,8 @@ class BouyguesTelecomContentScript extends ContentScript {
       'div[href="/mon-compte/infosperso"] a',
       '.personalInfosAccountDetails'
     )
+    // multiple ajax request update the content. Wait for every content to be present
+    await this.waitForElementInWorker('.title_address')
   }
 
   async navigateToBillsPage() {

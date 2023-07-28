@@ -225,6 +225,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   async fetch(context) {
     this.log('info', 'fetch starts')
     await this.saveCredentials(this.store.userCredentials)
+    await this.saveIdentity({ contact: this.store.userIdentity })
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()
@@ -392,13 +393,15 @@ class BouyguesTelecomContentScript extends ContentScript {
         givenName: firstName,
         familyName
       },
-      address: {
-        street,
-        postCode,
-        city,
-        country,
-        formattedAddress: addressElement.replace(/<br>/g, ' ')
-      }
+      address: [
+        {
+          street,
+          postCode,
+          city,
+          country,
+          formattedAddress: addressElement.replace(/<br>/g, ' ')
+        }
+      ]
     }
     await this.sendToPilot({ userIdentity })
     this.log('info', `${JSON.stringify(userIdentity)}`)

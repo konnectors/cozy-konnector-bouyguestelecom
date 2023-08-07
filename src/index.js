@@ -437,7 +437,6 @@ class BouyguesTelecomContentScript extends ContentScript {
       ]
     }
     await this.sendToPilot({ userIdentity })
-    this.log('info', `${JSON.stringify(userIdentity)}`)
   }
 
   async checkInterception(number) {

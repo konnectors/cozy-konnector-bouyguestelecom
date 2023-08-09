@@ -9598,6 +9598,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     this.log('info', '🤖 fetch starts')
     await this.saveCredentials(this.store.userCredentials)
     await this.saveIdentity({ contact: this.store.userIdentity })
+    this.log('info', '🤖 after saveIdentity')
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()

@@ -9595,59 +9595,67 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async fetch(context) {
-    this.log('info', '🤖 fetch starts')
-    await this.saveCredentials(this.store.userCredentials)
-    await this.saveIdentity({ contact: this.store.userIdentity })
-    this.log('info', '🤖 after saveIdentity')
-    const moreBillsButtonSelector =
-      '#page > section > .container > .has-text-centered > a'
-    await this.navigateToBillsPage()
-    await this.waitForElementInWorker('div[class="box is-loaded"]')
-    await this.runInWorkerUntilTrue({
-      method: 'checkInterception',
-      args: [1]
-    })
+    try {
+      this.log('info', '🤖 fetch starts')
+      await this.saveCredentials(this.store.userCredentials)
+      await this.saveIdentity({ contact: this.store.userIdentity })
+      this.log('info', '🤖 after saveIdentity')
+      const moreBillsButtonSelector =
+        '#page > section > .container > .has-text-centered > a'
+      await this.navigateToBillsPage()
+      await this.waitForElementInWorker('div[class="box is-loaded"]')
+      await this.runInWorkerUntilTrue({
+        method: 'checkInterception',
+        args: [1]
+      })
 
-    let moreBills = true
-    let lap = 0
-    while (moreBills) {
-      lap++
-      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-      if (moreBills) {
-        await this.runInWorker('click', moreBillsButtonSelector)
-        await this.runInWorkerUntilTrue({
-          method: 'checkInterception',
-          args: [lap + 1]
-        })
+      let moreBills = true
+      let lap = 0
+      while (moreBills) {
+        lap++
+        moreBills = await this.isElementInWorker(moreBillsButtonSelector)
+        if (moreBills) {
+          await this.runInWorker('click', moreBillsButtonSelector)
+          await this.runInWorkerUntilTrue({
+            method: 'checkInterception',
+            args: [lap + 1]
+          })
+        }
       }
-    }
-    const neededIndex = this.store.arrayLength - 1
-    const pageBills = await this.runInWorker('computeBills', {
-      lap,
-      neededIndex
-    })
-    for (const oneBill of pageBills) {
-      const billToDownload = await this.runInWorker('getDownloadHref', oneBill)
-      if (
-        billToDownload.lineNumber.startsWith('06') ||
-        billToDownload.lineNumber.startsWith('07')
-      ) {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'phone_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
-      } else {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'isp_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
+      const neededIndex = this.store.arrayLength - 1
+      const pageBills = await this.runInWorker('computeBills', {
+        lap,
+        neededIndex
+      })
+      for (const oneBill of pageBills) {
+        const billToDownload = await this.runInWorker(
+          'getDownloadHref',
+          oneBill
+        )
+        if (
+          billToDownload.lineNumber.startsWith('06') ||
+          billToDownload.lineNumber.startsWith('07')
+        ) {
+          await this.saveBills([billToDownload], {
+            context,
+            fileIdAttributes: ['vendorRef'],
+            contentType: 'application/pdf',
+            qualificationLabel: 'phone_invoice',
+            subPath: `${billToDownload.lineNumber}`
+          })
+        } else {
+          await this.saveBills([billToDownload], {
+            context,
+            fileIdAttributes: ['vendorRef'],
+            contentType: 'application/pdf',
+            qualificationLabel: 'isp_invoice',
+            subPath: `${billToDownload.lineNumber}`
+          })
+        }
       }
+    } catch (err) {
+      this.log('error', 'Got error in fetch : ', err.message)
+      throw err
     }
   }
 

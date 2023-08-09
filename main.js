@@ -9569,7 +9569,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async getUserDataFromWebsite() {
     try {
-      this.log('info', '🤖 getUserDataFromWebsite starts')
+      this.log('info', '🤖 getUserDataFromWebsite starts -> ')
       await this.navigateToMonComptePage()
       await this.navigateToInfosPage()
       await this.runInWorker('fetchIdentity')

@@ -1,0 +1,81 @@
+{
+  "version": "2.2.0",
+  "name": "Bouygues Telecom",
+  "type": "konnector",
+  "language": "node",
+  "icon": "icon.svg",
+  "slug": "bouyguestelecom",
+  "source": "git@github.com:konnectors/cozy-konnector-bouyguestelecom.git",
+  "editor": "Cozy",
+  "vendor_link": "https://bouyguestelecom.fr/",
+  "categories": [
+    "phone_invoice",
+    "isp_invoice"
+  ],
+  "fields": {},
+  "clientSide": true,
+  "langs": [
+    "fr",
+    "en"
+  ],
+  "folders": [
+    {
+      "defaultDir": "$administrative/$konnector/$account"
+    }
+  ],
+  "permissions": {
+    "bills": {
+      "type": "io.cozy.bills"
+    },
+    "files": {
+      "type": "io.cozy.files"
+    },
+    "carbon_copy": {
+      "type": "io.cozy.certified.carbon_copy"
+    },
+    "identities": {
+      "type": "io.cozy.identities"
+    }
+  },
+  "locales": {
+    "fr": {
+      "short_description": "Récupère vos factures Bouygues Telecom.",
+      "long_description": "Récupère vos factures Bouygues Telecom.",
+      "permissions": {
+        "carboncopy": {
+          "description": "Utilisé pour certifier que vos fichiers sont copie conforme avec les documents d'origine"
+        },
+        "bills": {
+          "description": "Utilisé pour sauver les données des factures"
+        },
+        "files": {
+          "description": "Utilisé pour sauvegarder les factures"
+        }
+      }
+    },
+    "en": {
+      "short_description": "Fetch a list of Bouygues Telecom invoices.",
+      "long_description": "Fetch a list of Bouygues Telecom invoices.",
+      "permissions": {
+        "carboncopy": {
+          "description": "Required for carbon copy documents"
+        },
+        "bills": {
+          "description": "Required to save the bills data"
+        },
+        "files": {
+          "description": "Required to save the bills"
+        }
+      }
+    }
+  },
+  "qualification_labels": [
+    "isp_invoice",
+    "phone_invoice"
+  ],
+  "features": [
+    "METADATA_DEDUP",
+    "CARBON_COPY",
+    "DOC_QUALIFICATION_V2"
+  ]
+}

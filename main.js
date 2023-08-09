@@ -9397,7 +9397,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async ensureAuthenticated({ account }) {
     try {
-      this.log('info', '🤖 EnsureAuthenticated starts')
+      this.log('info', '🤖 EnsureAuthenticated starts ->')
       let srcFromIframe
       if (!account) {
         await this.ensureNotAuthenticated()
@@ -9721,7 +9721,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker('.title_address')
+    await this.waitForElementInWorker(
+      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    )
   }
 
   async navigateToBillsPage() {
@@ -9750,6 +9752,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
     )
     const elementsArray = Array.from(infosElements)
+    this.log('info', '👅 elementsArray.length', elementsArray.length)
     const infosArray = []
     for (const info of elementsArray) {
       const spans = info.querySelectorAll('span')
@@ -9764,14 +9767,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       continue
     }
     mailAddress = infosArray[0]
-    this.log('info', '👅 ' + JSON.stringify(infosArray))
+    this.log('info', '👅 infosArray ' + JSON.stringify(infosArray))
     phoneNumber = infosArray[1].replace(/ /g, '')
     const firstName = document.querySelector('.firstName').textContent
     const familyName = document.querySelector('.name').textContent
     const addressElement = document.querySelector(
       '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
     ).innerHTML
-    this.log('info', '👅 ' + JSON.stringify(addressElement))
+    this.log('info', '👅 addressElement ' + JSON.stringify(addressElement))
     const [street, postCodeAndCity, country] = addressElement.split('<br>')
     const [postCode, city] = postCodeAndCity.split(' ')
     const userIdentity = {

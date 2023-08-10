@@ -2030,7 +2030,10 @@ function _regeneratorRuntime() {
       if ("executing" === state) throw new Error("Generator is already running");
       if ("completed" === state) {
         if ("throw" === method) throw arg;
-        return doneResult();
+        return {
+          value: void 0,
+          done: !0
+        };
       }
       for (context.method = method, context.arg = arg;;) {
         var delegate = context.delegate;
@@ -2083,7 +2086,7 @@ function _regeneratorRuntime() {
     }], tryLocsList.forEach(pushTryEntry, this), this.reset(!0);
   }
   function values(iterable) {
-    if (iterable) {
+    if (iterable || "" === iterable) {
       var iteratorMethod = iterable[iteratorSymbol];
       if (iteratorMethod) return iteratorMethod.call(iterable);
       if ("function" == typeof iterable.next) return iterable;
@@ -2096,15 +2099,7 @@ function _regeneratorRuntime() {
         return next.next = next;
       }
     }
-    return {
-      next: doneResult
-    };
-  }
-  function doneResult() {
-    return {
-      value: undefined,
-      done: !0
-    };
+    throw new TypeError(_typeof(iterable) + " is not iterable");
   }
   return GeneratorFunction.prototype = GeneratorFunctionPrototype, defineProperty(Gp, "constructor", {
     value: GeneratorFunctionPrototype,
@@ -2535,14 +2530,9 @@ function pTimeout(promise, options) {
 
 	let timer;
 
-	const cancelablePromise = new Promise((resolve, reject) => {
+	const wrappedPromise = new Promise((resolve, reject) => {
 		if (typeof milliseconds !== 'number' || Math.sign(milliseconds) !== 1) {
 			throw new TypeError(`Expected \`milliseconds\` to be a positive number, got \`${milliseconds}\``);
-		}
-
-		if (milliseconds === Number.POSITIVE_INFINITY) {
-			resolve(promise);
-			return;
 		}
 
 		if (options.signal) {
@@ -2554,6 +2544,11 @@ function pTimeout(promise, options) {
 			signal.addEventListener('abort', () => {
 				reject(getAbortedReason(signal));
 			});
+		}
+
+		if (milliseconds === Number.POSITIVE_INFINITY) {
+			promise.then(resolve, reject);
+			return;
 		}
 
 		// We create the error outside of `setTimeout` to preserve the stack trace.
@@ -2589,10 +2584,12 @@ function pTimeout(promise, options) {
 				resolve(await promise);
 			} catch (error) {
 				reject(error);
-			} finally {
-				customTimers.clearTimeout.call(undefined, timer);
 			}
 		})();
+	});
+
+	const cancelablePromise = wrappedPromise.finally(() => {
+		cancelablePromise.clear();
 	});
 
 	cancelablePromise.clear = () => {
@@ -8190,7 +8187,7 @@ window.fetch = async (...args) => {
 
 class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTED_MODULE_0__.ContentScript {
   async navigateToBasePage() {
-    this.log('info', 'navigateToBasePage starts')
+    this.log('info', '✅ navigateToBasePage starts')
     await this.goto(baseUrl)
     await this.waitForElementInWorker('[data-menu-open=user]')
     await this.runInWorker('waitForLocalStorage')
@@ -8220,48 +8217,63 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async navigateToLoginForm() {
-    this.log('info', 'navigateToLoginForm starts')
+    this.log('info', '✅ navigateToLoginForm starts')
     await this.runInWorkerUntilTrue({ method: 'makeLoginFormVisible' })
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', 'EnsureAuthenticated starts')
-    let srcFromIframe
-    if (!account) {
-      await this.ensureNotAuthenticated()
-    }
-    await this.navigateToBasePage()
-    if (await this.runInWorker('checkAuthenticated')) {
-      this.log('info', 'Auth detected')
-      return true
-    }
-    this.log('info', 'No auth detected')
-    await this.navigateToLoginForm()
-    srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
-      return document
-        .querySelector('#bytelid_partial_acoMenu_login')
-        .getAttribute('src')
-    })
-    await this.goto(srcFromIframe)
-    await this.waitForElementInWorker('#username')
-    let credentials = await this.getCredentials()
-    if (credentials && credentials.email && credentials.password) {
-      try {
-        this.log('info', 'Got credentials, trying autologin')
-        await this.tryAutoLogin(credentials)
-      } catch (error) {
-        this.log('warn', 'autoLogin error' + error.message)
+    try {
+      this.log('info', '🤖 EnsureAuthenticated starts ->')
+      if (!account) {
+        await this.ensureNotAuthenticated()
+      }
+      await this.navigateToBasePage()
+      if (await this.runInWorker('checkAuthenticated')) {
+        this.log('info', 'Auth detected')
+        return true
+      }
+      this.log('info', 'No auth detected')
+      await this.navigateToLoginForm()
+      const iframenumber = await this.evaluateInWorker(
+        function getSrcFromIFrame() {
+          return document.querySelectorAll('#bytelid_partial_acoMenu_login')
+            .length
+        }
+      )
+      this.log('info', '✅ iframenumber: ' + iframenumber)
+      const srcFromIframe = await this.evaluateInWorker(
+        function getSrcFromIFrame() {
+          return document
+            .querySelector('#bytelid_partial_acoMenu_login')
+            .getAttribute('src')
+        }
+      )
+      this.log('info', '✅ srcFromIframe: ' + srcFromIframe)
+      await this.goto(srcFromIframe)
+      await this.waitForElementInWorker('#username')
+      let credentials = await this.getCredentials()
+      credentials = null
+      if (credentials && credentials.email && credentials.password) {
+        try {
+          this.log('info', 'Got credentials, trying autologin')
+          await this.tryAutoLogin(credentials)
+        } catch (error) {
+          this.log('warn', 'autoLogin error' + error.message)
+          await this.showLoginFormAndWaitForAuthentication()
+        }
+      } else {
+        this.log('info', 'No credentials found, waiting for user input')
         await this.showLoginFormAndWaitForAuthentication()
       }
-    } else {
-      this.log('info', 'No credentials found, waiting for user input')
-      await this.showLoginFormAndWaitForAuthentication()
+      return true
+    } catch (err) {
+      this.log('error', 'Got error in ensureAuthenticated : ' + err.message)
+      throw err
     }
-    return true
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
+    this.log('info', '🤖 ensureNotAuthenticated starts')
     await this.navigateToBasePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
@@ -8288,7 +8300,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async checkAuthenticated() {
-    this.log('info', 'checkAuthenticated starts')
+    this.log('info', '✅ checkAuthenticated starts')
     const passwordField = document.querySelector('#password')
     const loginField = document.querySelector('#username')
     if (passwordField && loginField) {
@@ -8333,6 +8345,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async checkIfAskingForCode() {
+    this.log('info', '✅ checkIfAskingForCode starts')
     const radioTile = document.querySelector('.radio-tile')
     const codeInputs = document.querySelector('.otp')
     if (radioTile || codeInputs) {
@@ -8342,7 +8355,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async waitForUserCode() {
-    this.log('info', 'Waiting for confirmation code')
+    this.log('info', '✅ Waiting for confirmation code')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
         const perfectNotification = document.querySelector('.is-level-2')
@@ -8370,7 +8383,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async findAndSendCredentials(loginField, passwordField) {
-    this.log('info', 'findAndSendCredentials starts')
+    this.log('info', '✅ findAndSendCredentials starts')
     let userLogin = loginField.value
     let userPassword = passwordField.value
     const userCredentials = {
@@ -8381,7 +8394,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async showLoginFormAndWaitForAuthentication() {
-    this.log('info', 'showLoginFormAndWaitForAuthentication start')
+    this.log('info', '✅ showLoginFormAndWaitForAuthentication start')
     await this.setWorkerState({ visible: true })
     await this.runInWorkerUntilTrue({
       method: 'waitForAuthenticated'
@@ -8390,84 +8403,111 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async getUserDataFromWebsite() {
-    this.log('info', 'getUserDataFromWebsite starts')
-    await this.navigateToMonComptePage()
-    await this.navigateToInfosPage()
-    await this.runInWorker('fetchIdentity')
-    if (!this.store.userIdentity?.email) {
-      throw new Error(
-        'getUserDataFromWebsite: Could not find email in user identity'
+    try {
+      this.log('info', '🤖 getUserDataFromWebsite starts -> ')
+      await this.navigateToMonComptePage()
+      await this.navigateToInfosPage()
+      await this.runInWorker('fetchIdentity')
+      this.log(
+        'info',
+        '👅 this.store.userIdentity?.email: ' + this.store.userIdentity?.email
       )
-    }
-    return {
-      sourceAccountIdentifier: this.store.userIdentity.email
+      if (!this.store.userIdentity?.email) {
+        throw new Error(
+          'getUserDataFromWebsite: Could not find email in user identity'
+        )
+      }
+      return {
+        sourceAccountIdentifier: this.store.userIdentity?.email
+      }
+    } catch (err) {
+      this.log(
+        'error',
+        'Got error in getUserDataFromWebsite : ' + JSON.stringify(err.message)
+      )
+      throw err
     }
   }
 
   async fetch(context) {
-    this.log('info', 'fetch starts')
-    await this.saveCredentials(this.store.userCredentials)
-    await this.saveIdentity({ contact: this.store.userIdentity })
-    const moreBillsButtonSelector =
-      '#page > section > .container > .has-text-centered > a'
-    await this.navigateToBillsPage()
-    await this.waitForElementInWorker('div[class="box is-loaded"]')
-    await this.runInWorkerUntilTrue({
-      method: 'checkInterception',
-      args: [1]
-    })
+    try {
+      this.log('info', '🤖 fetch starts ->')
+      this.log(
+        'info',
+        'this.store.userCredentials',
+        this.store?.userCredentials
+      )
+      await this.saveCredentials(this.store.userCredentials)
+      this.log('info', '🤖 after saveCredentials')
+      await this.saveIdentity({ contact: this.store.userIdentity })
+      this.log('info', '🤖 after saveIdentity')
+      const moreBillsButtonSelector =
+        '#page > section > .container > .has-text-centered > a'
+      await this.navigateToBillsPage()
+      await this.waitForElementInWorker('div[class="box is-loaded"]')
+      await this.runInWorkerUntilTrue({
+        method: 'checkInterception',
+        args: [1]
+      })
 
-    let moreBills = true
-    let lap = 0
-    while (moreBills) {
-      lap++
-      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-      if (moreBills) {
-        await this.runInWorker('click', moreBillsButtonSelector)
-        await this.runInWorkerUntilTrue({
-          method: 'checkInterception',
-          args: [lap + 1]
-        })
+      let moreBills = true
+      let lap = 0
+      while (moreBills) {
+        lap++
+        moreBills = await this.isElementInWorker(moreBillsButtonSelector)
+        if (moreBills) {
+          await this.runInWorker('click', moreBillsButtonSelector)
+          await this.runInWorkerUntilTrue({
+            method: 'checkInterception',
+            args: [lap + 1]
+          })
+        }
       }
-    }
-    const neededIndex = this.store.arrayLength - 1
-    const pageBills = await this.runInWorker('computeBills', {
-      lap,
-      neededIndex
-    })
-    for (const oneBill of pageBills) {
-      const billToDownload = await this.runInWorker('getDownloadHref', oneBill)
-      if (
-        billToDownload.lineNumber.startsWith('06') ||
-        billToDownload.lineNumber.startsWith('07')
-      ) {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'phone_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
-      } else {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'isp_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
+      const neededIndex = this.store.arrayLength - 1
+      const pageBills = await this.runInWorker('computeBills', {
+        lap,
+        neededIndex
+      })
+      for (const oneBill of pageBills) {
+        const billToDownload = await this.runInWorker(
+          'getDownloadHref',
+          oneBill
+        )
+        if (
+          billToDownload.lineNumber.startsWith('06') ||
+          billToDownload.lineNumber.startsWith('07')
+        ) {
+          await this.saveBills([billToDownload], {
+            context,
+            fileIdAttributes: ['vendorRef'],
+            contentType: 'application/pdf',
+            qualificationLabel: 'phone_invoice',
+            subPath: `${billToDownload.lineNumber}`
+          })
+        } else {
+          await this.saveBills([billToDownload], {
+            context,
+            fileIdAttributes: ['vendorRef'],
+            contentType: 'application/pdf',
+            qualificationLabel: 'isp_invoice',
+            subPath: `${billToDownload.lineNumber}`
+          })
+        }
       }
+    } catch (err) {
+      this.log('error', 'Got error in fetch : ', err.message)
+      throw err
     }
   }
 
   async tryAutoLogin(credentials) {
-    this.log('info', 'TryAutologin starts')
+    this.log('info', '✅ TryAutologin starts')
     await this.autoLogin(credentials)
     await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
   }
 
   async autoLogin(credentials) {
-    this.log('info', 'AutoLogin starts')
+    this.log('info', '✅ AutoLogin starts')
     await this.waitForElementInWorker('#username')
     await this.runInWorker('fillText', '#username', credentials.email)
     await this.runInWorker('fillText', '#password', credentials.password)
@@ -8475,6 +8515,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async makeLoginFormVisible() {
+    this.log('info', '✅ makeLoginFormVisible starts')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
         const loginFormButton = document.querySelector('#login')
@@ -8508,18 +8549,20 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async navigateToInfosPage() {
-    this.log('info', 'navigateToInfosPage starts')
+    this.log('info', '✅ navigateToInfosPage starts')
     await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
     await this.clickAndWait(
       'div[href="/mon-compte/infosperso"] a',
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker('.title_address')
+    await this.waitForElementInWorker(
+      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    )
   }
 
   async navigateToBillsPage() {
-    this.log('info', 'navigateToBillsPage starts')
+    this.log('info', '✅ navigateToBillsPage starts')
     await this.clickAndWait('#menu', '.has-ending-arrow')
     await this.evaluateInWorker(() => {
       document.querySelectorAll('.has-ending-arrow')[1].click()
@@ -8528,6 +8571,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async navigateToMonComptePage() {
+    this.log('info', '✅ navigateToMonComptePage starts')
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#casiframe'),
@@ -8536,13 +8580,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async fetchIdentity() {
-    this.log('info', 'fetchIdentity starts')
+    this.log('info', '✅ fetchIdentity starts')
     let mailAddress
     let phoneNumber
     const infosElements = document.querySelectorAll(
       '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
     )
     const elementsArray = Array.from(infosElements)
+    this.log('info', '👅 elementsArray.length', elementsArray.length)
     const infosArray = []
     for (const info of elementsArray) {
       const spans = info.querySelectorAll('span')
@@ -8557,12 +8602,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       continue
     }
     mailAddress = infosArray[0]
+    this.log('info', '👅 infosArray ' + JSON.stringify(infosArray))
     phoneNumber = infosArray[1].replace(/ /g, '')
     const firstName = document.querySelector('.firstName').textContent
     const familyName = document.querySelector('.name').textContent
     const addressElement = document.querySelector(
       '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
     ).innerHTML
+    this.log('info', '👅 addressElement ' + JSON.stringify(addressElement))
     const [street, postCodeAndCity, country] = addressElement.split('<br>')
     const [postCode, city] = postCodeAndCity.split(' ')
     const userIdentity = {
@@ -8588,11 +8635,10 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       ]
     }
     await this.sendToPilot({ userIdentity })
-    this.log('info', `${JSON.stringify(userIdentity)}`)
   }
 
   async checkInterception(number) {
-    this.log('info', 'checkInterception starts')
+    this.log('info', '✅ checkInterception starts')
     this.log('info', `number in checkInterception : ${number}`)
     if (billsJSON.length >= number) {
       await this.sendToPilot({ arrayLength: billsJSON.length })
@@ -8602,7 +8648,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async computeBills(infos) {
-    this.log('info', 'computeBills starts')
+    this.log('info', '✅ computeBills starts')
     const computedBills = []
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
@@ -8651,7 +8697,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async getDownloadHref(bill) {
-    this.log('info', 'getDownloadHref starts')
+    this.log('info', '✅ getDownloadHref starts')
     const hrefAndToken = await this.getFileDownloadHref(bill.fileurl)
     let goodBill = {
       ...bill
@@ -8666,7 +8712,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async getFileDownloadHref(url) {
-    this.log('info', 'getFileDownloadHref starts')
+    this.log('info', '✅ getFileDownloadHref starts')
     const token = window.sessionStorage.getItem('a360-access_token')
     const response = await window.fetch(url, {
       headers: {

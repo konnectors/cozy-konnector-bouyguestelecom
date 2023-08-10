@@ -2030,10 +2030,7 @@ function _regeneratorRuntime() {
       if ("executing" === state) throw new Error("Generator is already running");
       if ("completed" === state) {
         if ("throw" === method) throw arg;
-        return {
-          value: void 0,
-          done: !0
-        };
+        return doneResult();
       }
       for (context.method = method, context.arg = arg;;) {
         var delegate = context.delegate;
@@ -2086,7 +2083,7 @@ function _regeneratorRuntime() {
     }], tryLocsList.forEach(pushTryEntry, this), this.reset(!0);
   }
   function values(iterable) {
-    if (iterable || "" === iterable) {
+    if (iterable) {
       var iteratorMethod = iterable[iteratorSymbol];
       if (iteratorMethod) return iteratorMethod.call(iterable);
       if ("function" == typeof iterable.next) return iterable;
@@ -2099,7 +2096,15 @@ function _regeneratorRuntime() {
         return next.next = next;
       }
     }
-    throw new TypeError(_typeof(iterable) + " is not iterable");
+    return {
+      next: doneResult
+    };
+  }
+  function doneResult() {
+    return {
+      value: undefined,
+      done: !0
+    };
   }
   return GeneratorFunction.prototype = GeneratorFunctionPrototype, defineProperty(Gp, "constructor", {
     value: GeneratorFunctionPrototype,
@@ -2530,9 +2535,14 @@ function pTimeout(promise, options) {
 
 	let timer;
 
-	const wrappedPromise = new Promise((resolve, reject) => {
+	const cancelablePromise = new Promise((resolve, reject) => {
 		if (typeof milliseconds !== 'number' || Math.sign(milliseconds) !== 1) {
 			throw new TypeError(`Expected \`milliseconds\` to be a positive number, got \`${milliseconds}\``);
+		}
+
+		if (milliseconds === Number.POSITIVE_INFINITY) {
+			resolve(promise);
+			return;
 		}
 
 		if (options.signal) {
@@ -2544,11 +2554,6 @@ function pTimeout(promise, options) {
 			signal.addEventListener('abort', () => {
 				reject(getAbortedReason(signal));
 			});
-		}
-
-		if (milliseconds === Number.POSITIVE_INFINITY) {
-			promise.then(resolve, reject);
-			return;
 		}
 
 		// We create the error outside of `setTimeout` to preserve the stack trace.
@@ -2584,12 +2589,10 @@ function pTimeout(promise, options) {
 				resolve(await promise);
 			} catch (error) {
 				reject(error);
+			} finally {
+				customTimers.clearTimeout.call(undefined, timer);
 			}
 		})();
-	});
-
-	const cancelablePromise = wrappedPromise.finally(() => {
-		cancelablePromise.clear();
 	});
 
 	cancelablePromise.clear = () => {
@@ -8224,6 +8227,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async ensureAuthenticated({ account }) {
     try {
       this.log('info', '🤖 EnsureAuthenticated starts ->')
+      let srcFromIframe
       if (!account) {
         await this.ensureNotAuthenticated()
       }
@@ -8234,21 +8238,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       }
       this.log('info', 'No auth detected')
       await this.navigateToLoginForm()
-      const iframenumber = await this.evaluateInWorker(
-        function getSrcFromIFrame() {
-          return document.querySelectorAll('#bytelid_partial_acoMenu_login')
-            .length
-        }
-      )
-      this.log('info', '✅ iframenumber: ' + iframenumber)
-      const srcFromIframe = await this.evaluateInWorker(
-        function getSrcFromIFrame() {
-          return document
-            .querySelector('#bytelid_partial_acoMenu_login')
-            .getAttribute('src')
-        }
-      )
-      this.log('info', '✅ srcFromIframe: ' + srcFromIframe)
+      srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
+        return document
+          .querySelector('#bytelid_partial_acoMenu_login')
+          .getAttribute('src')
+      })
       await this.goto(srcFromIframe)
       await this.waitForElementInWorker('#username')
       let credentials = await this.getCredentials()

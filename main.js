@@ -8525,7 +8525,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           const closeButton = document.querySelector(
             'button[data-real-class="modal-close is-large"]'
           )
-          closeButton.click()
+          if (closeButton) {
+            closeButton.click()
+          }
           return false
         }
       },

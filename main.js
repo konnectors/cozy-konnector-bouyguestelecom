@@ -8222,12 +8222,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async navigateToLoginForm() {
     this.log('info', '✅ navigateToLoginForm starts')
     await this.runInWorkerUntilTrue({ method: 'makeLoginFormVisible' })
+    this.log('info', '✅✅ navigateToLoginForm end')
   }
 
   async ensureAuthenticated({ account }) {
     try {
       this.log('info', '🤖 EnsureAuthenticated starts ->')
-      let srcFromIframe
       if (!account) {
         await this.ensureNotAuthenticated()
       }
@@ -8238,11 +8238,21 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       }
       this.log('info', 'No auth detected')
       await this.navigateToLoginForm()
-      srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
-        return document
-          .querySelector('#bytelid_partial_acoMenu_login')
-          .getAttribute('src')
-      })
+      const iframelength = await this.evaluateInWorker(
+        function getSrcFromIFrame() {
+          return document.querySelectorAll('#bytelid_partial_acoMenu_login')
+            .length
+        }
+      )
+      this.log('info', '✅ iframelength : ' + iframelength)
+      const srcFromIframe = await this.evaluateInWorker(
+        function getSrcFromIFrame() {
+          return document
+            .querySelector('#bytelid_partial_acoMenu_login')
+            .getAttribute('src')
+        }
+      )
+      this.log('info', '✅ srcFromIframe : ' + srcFromIframe)
       await this.goto(srcFromIframe)
       await this.waitForElementInWorker('#username')
       let credentials = await this.getCredentials()
@@ -8509,14 +8519,15 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async makeLoginFormVisible() {
-    this.log('info', '✅ makeLoginFormVisible starts')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
+        this.log('info', '✅ makeLoginFormVisible starts')
         const loginFormButton = document.querySelector('#login')
         if (loginFormButton) loginFormButton.click()
 
+        let result = false
         if (document.querySelector('#bytelid_partial_acoMenu_login')) {
-          return true
+          result = true
         } else {
           this.log(
             'info',
@@ -8528,8 +8539,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           if (closeButton) {
             closeButton.click()
           }
-          return false
+          result = false
         }
+
+        this.log('info', '✅ makeLoginFormVisible ends with : ' + result)
+        return result
       },
       {
         interval: 1000,

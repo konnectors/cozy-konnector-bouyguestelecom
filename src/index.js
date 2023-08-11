@@ -366,7 +366,9 @@ class BouyguesTelecomContentScript extends ContentScript {
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker('.title_address')
+    await this.waitForElementInWorker(
+      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    )
   }
 
   async navigateToBillsPage() {

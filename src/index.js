@@ -42,6 +42,9 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', 'navigateToBasePage starts')
     await this.goto(baseUrl)
     await this.waitForElementInWorker('[data-menu-open=user]')
+    // for iphone: force a reload of the page, to have all needed data in localStorage
+    await this.goto(baseUrl)
+    await this.waitForElementInWorker('[data-menu-open=user]')
     await this.runInWorker('waitForLocalStorage')
   }
 

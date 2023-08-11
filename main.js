@@ -8235,8 +8235,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         )
       }, 100)
       const myResolve = () => {
+        this.log('info', `😈 storage myresolve`)
         for (const key of keys) {
-          this.log('debug', `😈 storage: ${key}`)
+          this.log('info', `😈 storage: ${key}`)
         }
         window.clearInterval(id)
         resolve()

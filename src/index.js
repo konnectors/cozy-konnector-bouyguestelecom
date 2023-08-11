@@ -74,7 +74,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', 'EnsureAuthenticated starts')
+    this.log('info', '🤖 EnsureAuthenticated starts')
     let srcFromIframe
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -110,7 +110,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
+    this.log('info', '🤖 ensureNotAuthenticated starts')
     await this.navigateToBasePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
@@ -239,7 +239,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async getUserDataFromWebsite() {
-    this.log('info', 'getUserDataFromWebsite starts')
+    this.log('info', '🤖 getUserDataFromWebsite starts')
     await this.navigateToMonComptePage()
     await this.navigateToInfosPage()
     await this.runInWorker('fetchIdentity')
@@ -254,7 +254,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async fetch(context) {
-    this.log('info', 'fetch starts')
+    this.log('info', '🤖 fetch starts')
     await this.saveCredentials(this.store.userCredentials)
     await this.saveIdentity({ contact: this.store.userIdentity })
     const moreBillsButtonSelector =
@@ -339,7 +339,9 @@ class BouyguesTelecomContentScript extends ContentScript {
           const closeButton = document.querySelector(
             'button[data-real-class="modal-close is-large"]'
           )
-          closeButton.click()
+          if (closeButton) {
+            closeButton.click()
+          }
           return false
         }
       },

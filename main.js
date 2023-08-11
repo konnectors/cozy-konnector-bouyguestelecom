@@ -8201,26 +8201,46 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
    */
   async waitForLocalStorage() {
     this.log('info', '✅ waitForLocalStorage starts')
-    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
-      () => {
-        const result = Boolean(
-          window.localStorage.getItem('bytel-tag-commander/oauth')
-        )
-        return result
-      },
-      {
-        interval: 100,
-        timeout: {
-          milliseconds: 1000,
-          message: new p_wait_for__WEBPACK_IMPORTED_MODULE_1__.TimeoutError(
-            'waitForLocalStorage timed out after 1 second'
-          )
-        }
-      }
-    )
+    // await waitFor(
+    //   () => {
+    //     const result = Boolean(
+    //       window.localStorage.getItem('bytel-tag-commander/oauth')
+    //     )
+    //     return result
+    //   },
+    //   {
+    //     interval: 100,
+    //     timeout: {
+    //       milliseconds: 1000,
+    //       message: new TimeoutError(
+    //         'waitForLocalStorage timed out after 1 second'
+    //       )
+    //     }
+    //   }
+    // )
     this.log('info', '✅ wait 5 second')
+    const keys = []
     await new Promise(resolve => {
-      window.setTimeout(resolve, 5000)
+      const id = window.setInterval(() => {
+        keys.push(
+          `localStorage: ${new Date.toJSON()}: ${JSON.stringify(
+            Object.keys(window.localStorage)
+          )}`
+        )
+        keys.push(
+          `sessionStorage: ${new Date.toJSON()}: ${JSON.stringify(
+            Object.keys(window.sessionStorage)
+          )}`
+        )
+      }, 100)
+      const myResolve = () => {
+        for (const key of keys) {
+          this.log('debug', `😈 storage: ${key}`)
+        }
+        window.clearInterval(id)
+        resolve()
+      }
+      window.setTimeout(myResolve, 5000)
     })
     this.log('info', '✅ after wait 5 second')
   }

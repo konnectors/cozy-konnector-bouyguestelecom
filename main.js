@@ -8200,6 +8200,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
    * Wait for a key in localStorage to be present to be sure a page is fully loaded
    */
   async waitForLocalStorage() {
+    this.log('info', '✅ waitForLocalStorage starts')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
         const result = Boolean(
@@ -8217,6 +8218,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         }
       }
     )
+    this.log('info', '✅ wait 5 second')
+    await new Promise(resolve => {
+      window.setTimeout(resolve, 5000)
+    })
+    this.log('info', '✅ after wait 5 second')
   }
 
   async navigateToLoginForm() {

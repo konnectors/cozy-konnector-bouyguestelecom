@@ -8505,7 +8505,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         }
       }
     } catch (err) {
-      this.log('error', 'Got error in fetch : ', err.message)
+      this.log('error', 'Got error in fetch : ' + err.message)
       throw err
     }
   }

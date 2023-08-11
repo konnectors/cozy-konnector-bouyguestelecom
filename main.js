@@ -8224,12 +8224,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     await new Promise(resolve => {
       const id = window.setInterval(() => {
         keys.push(
-          `localStorage: ${new Date.toJSON()}: ${JSON.stringify(
+          `localStorage: ${new Date().toJSON()}: ${JSON.stringify(
             Object.keys(window.localStorage)
           )}`
         )
         keys.push(
-          `sessionStorage: ${new Date.toJSON()}: ${JSON.stringify(
+          `sessionStorage: ${new Date().toJSON()}: ${JSON.stringify(
             Object.keys(window.sessionStorage)
           )}`
         )

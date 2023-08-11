@@ -8444,11 +8444,10 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       this.log('info', '🤖 fetch starts ->')
       this.log(
         'info',
-        'this.store.userCredentials',
-        this.store?.userCredentials
+        'this.store.userCredentials: ' +
+          JSON.stringify(this.store?.userCredentials)
       )
-      let credentials = await this.getCredentials()
-      if (!credentials) {
+      if (this.store?.userCredentials) {
         await this.saveCredentials(this.store.userCredentials)
         this.log('info', '🤖 after saveCredentials')
       }

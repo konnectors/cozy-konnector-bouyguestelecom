@@ -8149,6 +8149,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var p_wait_for__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(18);
 /* harmony import */ var _cozy_minilog__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(20);
 /* harmony import */ var _cozy_minilog__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(_cozy_minilog__WEBPACK_IMPORTED_MODULE_2__);
+/* eslint-disable no-unreachable */
 
 
 
@@ -8462,17 +8463,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async fetch(context) {
     try {
       this.log('info', '🤖 fetch starts ->')
-      this.log(
-        'info',
-        '🤖🤖🤖 this.store.userCredentials: ' +
-          JSON.stringify(this.store?.userCredentials)
-      )
       if (this.store?.userCredentials) {
         await this.saveCredentials(this.store.userCredentials)
         this.log('info', '🤖 after saveCredentials')
       }
       await this.saveIdentity({ contact: this.store.userIdentity })
       this.log('info', '🤖 after saveIdentity')
+      this.log('info', '🤖 do not fetch for faster tests')
+      return
       const moreBillsButtonSelector =
         '#page > section > .container > .has-text-centered > a'
       await this.navigateToBillsPage()

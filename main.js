@@ -8470,7 +8470,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       await this.saveIdentity({ contact: this.store.userIdentity })
       this.log('info', '🤖 after saveIdentity')
       this.log('info', '🤖 do not fetch for faster tests')
-      return
       const moreBillsButtonSelector =
         '#page > section > .container > .has-text-centered > a'
       await this.navigateToBillsPage()
@@ -8492,6 +8491,8 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
             args: [lap + 1]
           })
         }
+        // FIXME for faster tests
+        moreBills = false
       }
       const neededIndex = this.store.arrayLength - 1
       const pageBills = await this.runInWorker('computeBills', {

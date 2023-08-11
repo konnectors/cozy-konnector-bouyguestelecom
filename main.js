@@ -8447,8 +8447,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         'this.store.userCredentials',
         this.store?.userCredentials
       )
-      await this.saveCredentials(this.store.userCredentials)
-      this.log('info', '🤖 after saveCredentials')
+      let credentials = await this.getCredentials()
+      if (!credentials) {
+        await this.saveCredentials(this.store.userCredentials)
+        this.log('info', '🤖 after saveCredentials')
+      }
       await this.saveIdentity({ contact: this.store.userIdentity })
       this.log('info', '🤖 after saveIdentity')
       const moreBillsButtonSelector =

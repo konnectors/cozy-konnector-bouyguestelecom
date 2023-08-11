@@ -8444,7 +8444,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       this.log('info', '🤖 fetch starts ->')
       this.log(
         'info',
-        'this.store.userCredentials: ' +
+        '🤖🤖🤖 this.store.userCredentials: ' +
           JSON.stringify(this.store?.userCredentials)
       )
       if (this.store?.userCredentials) {

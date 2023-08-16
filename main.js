@@ -8193,6 +8193,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     this.log('info', 'navigateToBasePage starts')
     await this.goto(baseUrl)
     await this.waitForElementInWorker('[data-menu-open=user]')
+    // for iphone: force a reload of the page, to have all needed data in localStorage
+    await this.goto(baseUrl)
+    await this.waitForElementInWorker('[data-menu-open=user]')
     await this.runInWorker('waitForLocalStorage')
   }
 
@@ -8225,7 +8228,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', 'EnsureAuthenticated starts')
+    this.log('info', '🤖 EnsureAuthenticated starts')
     let srcFromIframe
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -8261,7 +8264,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
+    this.log('info', '🤖 ensureNotAuthenticated starts')
     await this.navigateToBasePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
@@ -8390,7 +8393,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async getUserDataFromWebsite() {
-    this.log('info', 'getUserDataFromWebsite starts')
+    this.log('info', '🤖 getUserDataFromWebsite starts')
     await this.navigateToMonComptePage()
     await this.navigateToInfosPage()
     await this.runInWorker('fetchIdentity')
@@ -8405,7 +8408,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async fetch(context) {
-    this.log('info', 'fetch starts')
+    this.log('info', '🤖 fetch starts')
     await this.saveCredentials(this.store.userCredentials)
     await this.saveIdentity({ contact: this.store.userIdentity })
     const moreBillsButtonSelector =
@@ -8490,7 +8493,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           const closeButton = document.querySelector(
             'button[data-real-class="modal-close is-large"]'
           )
-          closeButton.click()
+          if (closeButton) {
+            closeButton.click()
+          }
           return false
         }
       },
@@ -8515,7 +8520,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker('.title_address')
+    await this.waitForElementInWorker(
+      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    )
   }
 
   async navigateToBillsPage() {
@@ -8588,7 +8595,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       ]
     }
     await this.sendToPilot({ userIdentity })
-    this.log('info', `${JSON.stringify(userIdentity)}`)
   }
 
   async checkInterception(number) {

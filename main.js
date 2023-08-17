@@ -8237,7 +8237,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', '🤖 EnsureAuthenticated starts')
+    this.log('info', '🤖 EnsureAuthenticated starts version 1')
     let srcFromIframe
     if (!account) {
       await this.ensureNotAuthenticated()

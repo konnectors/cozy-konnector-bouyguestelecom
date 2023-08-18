@@ -322,7 +322,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context3.stop();
             }
           }
-        }, _callee3, this);
+        }, _callee3);
       }));
 
       function checkAuthenticated() {
@@ -432,7 +432,7 @@ var ContentScript = /*#__PURE__*/function () {
                           return _context5.stop();
                       }
                     }
-                  }, _callee5, this);
+                  }, _callee5);
                 })), {
                   interval: interval,
                   timeout: {
@@ -615,7 +615,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return this.runInWorkerUntilTrue({
                   method: 'waitForElementNoReload',
                   timeout: options === null || options === void 0 ? void 0 : options.timeout,
-                  args: [selector, options]
+                  args: [selector]
                 });
 
               case 4:
@@ -672,8 +672,6 @@ var ContentScript = /*#__PURE__*/function () {
      * Wait for a dom element to be present on the page. This won't resolve if the page reloads
      *
      * @param {string} selector - css selector we are waiting for
-     * @param {object} options - options object
-     * @param {number} [options.timeout] - number of miliseconds before the function sends a timeout error. Default 30s
      * @returns {Promise.<true>} - Returns true when ready
      */
 
@@ -681,33 +679,28 @@ var ContentScript = /*#__PURE__*/function () {
     key: "waitForElementNoReload",
     value: function () {
       var _waitForElementNoReload = (0, _asyncToGenerator2.default)( /*#__PURE__*/_regenerator.default.mark(function _callee11(selector) {
-        var options,
-            timeout,
-            _args11 = arguments;
         return _regenerator.default.wrap(function _callee11$(_context11) {
           while (1) {
             switch (_context11.prev = _context11.next) {
               case 0:
-                options = _args11.length > 1 && _args11[1] !== undefined ? _args11[1] : {};
                 this.onlyIn(WORKER_TYPE, 'waitForElementNoReload');
 
                 _log.debug('waitForElementNoReload', selector);
 
-                timeout = options.timeout || DEFAULT_WAIT_FOR_ELEMENT_TIMEOUT;
-                _context11.next = 6;
+                _context11.next = 4;
                 return (0, _pWaitFor.default)(function () {
                   return Boolean(document.querySelector(selector));
                 }, {
                   timeout: {
-                    milliseconds: timeout,
-                    message: new _pWaitFor.TimeoutError("waitForElementNoReload ".concat(selector, " timed out after ").concat(timeout, "ms"))
+                    milliseconds: DEFAULT_WAIT_FOR_ELEMENT_TIMEOUT,
+                    message: new _pWaitFor.TimeoutError("waitForElementNoReload ".concat(selector, " timed out after ").concat(DEFAULT_WAIT_FOR_ELEMENT_TIMEOUT, "ms"))
                   }
                 });
 
-              case 6:
+              case 4:
                 return _context11.abrupt("return", true);
 
-              case 7:
+              case 5:
               case "end":
                 return _context11.stop();
             }
@@ -1678,7 +1671,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context33.stop();
             }
           }
-        }, _callee33, this);
+        }, _callee33);
       }));
 
       function ensureAuthenticated() {
@@ -1708,7 +1701,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context34.stop();
             }
           }
-        }, _callee34, this);
+        }, _callee34);
       }));
 
       function ensureNotAuthenticated() {
@@ -1736,7 +1729,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context35.stop();
             }
           }
-        }, _callee35, this);
+        }, _callee35);
       }));
 
       function getUserDataFromWebsite() {
@@ -1845,7 +1838,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context38.stop();
             }
           }
-        }, _callee38, this);
+        }, _callee38);
       }));
 
       function fetch(_x32) {
@@ -1873,7 +1866,7 @@ var ContentScript = /*#__PURE__*/function () {
                 return _context39.stop();
             }
           }
-        }, _callee39, this);
+        }, _callee39);
       }));
 
       function getCliskVersion() {
@@ -4462,7 +4455,7 @@ var Bridge = /*#__PURE__*/function () {
                 return _context.stop();
             }
           }
-        }, _callee, this);
+        }, _callee);
       }));
 
       function init(_x) {
@@ -4663,7 +4656,7 @@ function _blobToBase() {
             return _context.stop();
         }
       }
-    }, _callee, this);
+    }, _callee);
   }));
   return _blobToBase.apply(this, arguments);
 }
@@ -4712,7 +4705,7 @@ function _callStringFunction() {
             return _context2.stop();
         }
       }
-    }, _callee2, this);
+    }, _callee2);
   }));
   return _callStringFunction.apply(this, arguments);
 }
@@ -5387,7 +5380,7 @@ module.exports = _defineProperty, module.exports.__esModule = true, module.expor
 /***/ ((module) => {
 
 "use strict";
-module.exports = JSON.parse('{"name":"cozy-clisk","version":"0.22.1","description":"All the libs needed to run a cozy client connector","repository":{"type":"git","url":"git+https://github.com/konnectors/libs.git"},"files":["dist"],"keywords":["konnector"],"main":"dist/index.js","author":"doubleface <christophe@cozycloud.cc>","license":"MIT","bugs":{"url":"https://github.com/konnectors/libs/issues"},"homepage":"https://github.com/konnectors/libs#readme","scripts":{"lint":"eslint \'src/**/*.js\'","prepublishOnly":"yarn run build","build":"babel --root-mode upward src/ -d dist/ --copy-files --verbose --ignore \'**/*.spec.js\',\'**/*.spec.jsx\'","test":"jest src"},"devDependencies":{"@babel/core":"7.20.12","babel-jest":"29.3.1","babel-preset-cozy-app":"2.0.4","jest":"29.3.1","jest-environment-jsdom":"29.3.1","typescript":"4.9.5"},"dependencies":{"@cozy/minilog":"^1.0.0","bluebird-retry":"^0.11.0","cozy-client":"^34.11.0","ky":"^0.25.1","lodash":"^4.17.21","p-wait-for":"^5.0.2","post-me":"^0.4.5"}}');
+module.exports = JSON.parse('{"name":"cozy-clisk","version":"0.22.1","description":"All the libs needed to run a cozy client connector","repository":{"type":"git","url":"git+https://github.com/konnectors/libs.git"},"files":["dist"],"keywords":["konnector"],"main":"dist/index.js","author":"doubleface <christophe@cozycloud.cc>","license":"MIT","bugs":{"url":"https://github.com/konnectors/libs/issues"},"homepage":"https://github.com/konnectors/libs#readme","scripts":{"lint":"eslint \'src/**/*.js\'","prepublishOnly":"yarn run build","build":"babel --root-mode upward src/ -d dist/ --copy-files --verbose --ignore \'**/*.spec.js\',\'**/*.spec.jsx\'","test":"jest src"},"devDependencies":{"@babel/core":"7.20.12","babel-jest":"29.3.1","babel-preset-cozy-app":"2.0.4","jest":"29.3.1","jest-environment-jsdom":"29.3.1","typescript":"4.9.5"},"dependencies":{"@cozy/minilog":"^1.0.0","bluebird-retry":"^0.11.0","cozy-client":"^34.11.0","ky":"^0.25.1","lodash":"^4.17.21","p-wait-for":"^5.0.2","post-me":"^0.4.5"},"gitHead":"fa9fbc21e5c48053216219373e12e24bd0c5655c"}');
 
 /***/ }),
 /* 46 */
@@ -8201,10 +8194,8 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     await this.goto(baseUrl)
     await this.waitForElementInWorker('[data-menu-open=user]')
     // for iphone: force a reload of the page, to have all needed data in localStorage
-    this.log('info', 'reload base page for iphone')
     await this.goto(baseUrl)
     await this.waitForElementInWorker('[data-menu-open=user]')
-    this.log('info', 'wait for local storage')
     await this.runInWorker('waitForLocalStorage')
   }
 
@@ -8237,7 +8228,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', '🤖 EnsureAuthenticated starts version 1')
+    this.log('info', '🤖 EnsureAuthenticated starts')
     let srcFromIframe
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -8434,17 +8425,17 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
     let moreBills = true
     let lap = 0
-    while (moreBills) {
-      lap++
-      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-      if (moreBills) {
-        await this.runInWorker('click', moreBillsButtonSelector)
-        await this.runInWorkerUntilTrue({
-          method: 'checkInterception',
-          args: [lap + 1]
-        })
-      }
+    // while (moreBills) {
+    lap++
+    moreBills = await this.isElementInWorker(moreBillsButtonSelector)
+    if (moreBills) {
+      await this.runInWorker('click', moreBillsButtonSelector)
+      await this.runInWorkerUntilTrue({
+        method: 'checkInterception',
+        args: [lap + 1]
+      })
     }
+    // }
     const neededIndex = this.store.arrayLength - 1
     const pageBills = await this.runInWorker('computeBills', {
       lap,
@@ -8472,6 +8463,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           subPath: `${billToDownload.lineNumber}`
         })
       }
+      break // FIXME to remove on relase
     }
   }
 

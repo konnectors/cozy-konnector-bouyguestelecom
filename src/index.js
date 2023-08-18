@@ -82,12 +82,13 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (!account) {
       await this.ensureNotAuthenticated()
     }
-    await this.navigateToBasePage()
+    await this.navigateToMonComptePage()
     if (await this.runInWorker('checkAuthenticated')) {
       this.log('info', 'Auth detected')
       return true
     }
     this.log('info', 'No auth detected')
+    await this.navigateToBasePage()
     await this.navigateToLoginForm()
     srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
       return document
@@ -164,11 +165,13 @@ class BouyguesTelecomContentScript extends ContentScript {
       )
       document.location.href = baseUrl
       return false
+    } else {
+      this.log('info', '👅 not success url pattern: ' + document.location.href)
     }
 
     try {
       const tokenExpire = JSON.parse(
-        localStorage.getItem('bytel-tag-commander/jwt-data')
+        window.localStorage.getItem('bytel-tag-commander/jwt-data')
       )?.exp
 
       if (!tokenExpire) {
@@ -369,9 +372,14 @@ class BouyguesTelecomContentScript extends ContentScript {
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker(
-      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-    )
+    await Promise.all([
+      this.waitForElementInWorker(
+        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+      ),
+      this.waitForElementInWorker(
+        '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+      )
+    ])
   }
 
   async navigateToBillsPage() {

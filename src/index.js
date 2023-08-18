@@ -82,12 +82,13 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (!account) {
       await this.ensureNotAuthenticated()
     }
-    await this.navigateToBasePage()
+    await this.navigateToMonComptePage()
     if (await this.runInWorker('checkAuthenticated')) {
       this.log('info', 'Auth detected')
       return true
     }
     this.log('info', 'No auth detected')
+    await this.navigateToBasePage()
     await this.navigateToLoginForm()
     srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
       return document
@@ -164,11 +165,13 @@ class BouyguesTelecomContentScript extends ContentScript {
       )
       document.location.href = baseUrl
       return false
+    } else {
+      this.log('info', '👅 not success url pattern: ' + document.location.href)
     }
 
     try {
       const tokenExpire = JSON.parse(
-        localStorage.getItem('bytel-tag-commander/jwt-data')
+        window.localStorage.getItem('bytel-tag-commander/jwt-data')
       )?.exp
 
       if (!tokenExpire) {
@@ -271,7 +274,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
     let moreBills = true
     let lap = 0
-    while (moreBills) {
+    // while (moreBills) {
       lap++
       moreBills = await this.isElementInWorker(moreBillsButtonSelector)
       if (moreBills) {
@@ -281,7 +284,7 @@ class BouyguesTelecomContentScript extends ContentScript {
           args: [lap + 1]
         })
       }
-    }
+    // }
     const neededIndex = this.store.arrayLength - 1
     const pageBills = await this.runInWorker('computeBills', {
       lap,
@@ -309,6 +312,7 @@ class BouyguesTelecomContentScript extends ContentScript {
           subPath: `${billToDownload.lineNumber}`
         })
       }
+      break // FIXME to remove on relase
     }
   }
 
@@ -369,9 +373,14 @@ class BouyguesTelecomContentScript extends ContentScript {
       '.personalInfosAccountDetails'
     )
     // multiple ajax request update the content. Wait for every content to be present
-    await this.waitForElementInWorker(
-      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-    )
+    await Promise.all([
+      this.waitForElementInWorker(
+        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+      ),
+      this.waitForElementInWorker(
+        '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+      )
+    ])
   }
 
   async navigateToBillsPage() {

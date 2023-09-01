@@ -8445,17 +8445,17 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
     let moreBills = true
     let lap = 0
-    // while (moreBills) {
-    lap++
-    moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-    if (moreBills) {
-      await this.runInWorker('click', moreBillsButtonSelector)
-      await this.runInWorkerUntilTrue({
-        method: 'checkInterception',
-        args: [lap + 1]
-      })
+    while (moreBills) {
+      lap++
+      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
+      if (moreBills) {
+        await this.runInWorker('click', moreBillsButtonSelector)
+        await this.runInWorkerUntilTrue({
+          method: 'checkInterception',
+          args: [lap + 1]
+        })
+      }
     }
-    // }
     const neededIndex = this.store.arrayLength - 1
     const pageBills = await this.runInWorker('computeBills', {
       lap,
@@ -8483,7 +8483,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           subPath: `${billToDownload.lineNumber}`
         })
       }
-      break // FIXME to remove on relase
     }
   }
 

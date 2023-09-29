@@ -10,6 +10,8 @@ const monCompteUrl = `${baseUrl}/mon-compte`
 const dashboardUrl = `${monCompteUrl}/dashboard`
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
+let step = 1
+
 let billsJSON = []
 // Here we need to override the fetch function to intercept the bills data sent by the website
 // when we reach the bills page. Scraping is extremly tricky to achieve as there is no explicit selectors
@@ -53,9 +55,11 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async ensureAuthenticated({ account }) {
-    this.log('info', 'EnsureAuthenticated starts')
+    // this.log('info', 'EnsureAuthenticated starts')
+    this.log('info', `EnsureAuthenticated starts step ${step}`)
     let srcFromIframe
     if (!account) {
+      this.log('info', 'No account found, launching ensureNotAuthenticated')
       await this.ensureNotAuthenticated()
     }
     await this.navigateToBasePage()
@@ -92,7 +96,10 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
+    // this.log('info', 'ensureNotAuthenticated starts')
+    step++
+    this.log('info', `ensureNotAuthenticated starts step ${step}`)
+
     await this.navigateToMonComptePage()
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (!authenticated) {
@@ -154,6 +161,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async checkIfAskingForCode() {
+    this.log('info', 'checkIfAskingForCode starts')
     const radioTile = document.querySelector('.radio-tile')
     const codeInputs = document.querySelector('.otp')
     if (radioTile || codeInputs) {
@@ -211,20 +219,28 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async getUserDataFromWebsite() {
-    this.log('info', 'getUserDataFromWebsite starts')
+    step++
+    // this.log('info', 'getUserDataFromWebsite starts')
+    this.log('info', `getUserDataFromWebsite starts step ${step}`)
+
     await this.navigateToInfosPage()
     await this.runInWorker('fetchIdentity')
-    await this.saveIdentity(this.store.userIdentity)
-    return {
-      sourceAccountIdentifier: this.store.userIdentity.email
-        ? this.store.userIdentity.email
-        : 'defaultTemplateSourceAccountIdentifier'
+    if (this.store.userIdentity.email) {
+      return {
+        sourceAccountIdentifier: this.store.userIdentity.email
+      }
+    } else {
+      throw new Error('No user data identifier, the konnector should be fixed.')
     }
   }
 
   async fetch(context) {
     this.log('info', 'fetch starts')
-    await this.saveCredentials(this.store.userCredentials)
+    await this.saveIdentity(this.store.userIdentity)
+    if (this.store.userCredentials) {
+      await this.saveCredentials(this.store.userCredentials)
+    }
+    // await this.waitForElementInWorker('[pause]')
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()
@@ -292,6 +308,9 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async makeLoginFormVisible() {
+    step++
+    // this.log('info', 'makeLoginFormVisible starts')
+    this.log('info', `makeLoginFormVisible starts step ${step}`)
     await waitFor(
       () => {
         const loginFormButton = document.querySelector('#login')
@@ -325,7 +344,10 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async navigateToInfosPage() {
-    this.log('info', 'navigateToInfosPage starts')
+    step++
+    // this.log('info', 'navigateToInfosPage starts')
+    this.log('info', `navigateToInfosPage starts step ${step}`)
+
     await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
     await this.clickAndWait(
       'div[href="/mon-compte/infosperso"] a',
@@ -334,15 +356,23 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async navigateToBillsPage() {
-    this.log('info', 'navigateToBillsPage starts')
+    step++
+    // this.log('info', 'navigateToBillsPage starts')
+    this.log('info', `navigateToBillsPage starts step ${step}`)
     await this.clickAndWait('#menu', '.has-ending-arrow')
     await this.evaluateInWorker(() => {
       document.querySelectorAll('.has-ending-arrow')[1].click()
     })
-    await this.waitForElementInWorker('#page > section > .container')
+    await Promise.all([
+      this.waitForElementInWorker('#page > section > .container'),
+      this.waitForElementInWorker('.is-level-5')
+    ])
   }
 
   async navigateToMonComptePage() {
+    step++
+    // this.log('info', 'navigateToMonComptePage starts')
+    this.log('info', `navigateToBillsPage starts step ${step}`)
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#casiframe'),
@@ -351,7 +381,18 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async fetchIdentity() {
-    this.log('info', 'fetchIdentity starts')
+    step++
+    // this.log('info', 'fetchIdentity starts')
+    this.log('info', `fetchIdentity starts step ${step}`)
+    let addressInfos
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i)
+      if (key.includes('/adresses-facturation')) {
+        addressInfos = JSON.parse(window.sessionStorage.getItem(key)).data.data
+          .items[0]
+      }
+    }
+
     let mailAddress
     let phoneNumber
     const infosElements = document.querySelectorAll(
@@ -375,11 +416,6 @@ class BouyguesTelecomContentScript extends ContentScript {
     phoneNumber = infosArray[1].replace(/ /g, '')
     const firstName = document.querySelector('.firstName').textContent
     const familyName = document.querySelector('.name').textContent
-    const addressElement = document.querySelector(
-      '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
-    ).innerHTML
-    const [street, postCodeAndCity, country] = addressElement.split('<br>')
-    const [postCode, city] = postCodeAndCity.split(' ')
     const userIdentity = {
       email: mailAddress,
       phone: [
@@ -391,22 +427,14 @@ class BouyguesTelecomContentScript extends ContentScript {
       name: {
         givenName: firstName,
         familyName
-      },
-      address: {
-        street,
-        postCode,
-        city,
-        country,
-        formattedAddress: addressElement.replace(/<br>/g, ' ')
       }
     }
+    userIdentity.address = this.formatAddress(addressInfos)
     await this.sendToPilot({ userIdentity })
-    this.log('info', `${JSON.stringify(userIdentity)}`)
   }
 
   async checkInterception(number) {
     this.log('info', 'checkInterception starts')
-    this.log('info', `number in checkInterception : ${number}`)
     if (billsJSON.length >= number) {
       await this.sendToPilot({ arrayLength: billsJSON.length })
       return true
@@ -415,7 +443,10 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async computeBills(infos) {
-    this.log('info', 'computeBills starts')
+    step++
+    // this.log('info', 'computeBills starts')
+    this.log('info', `computeBills starts step ${step}`)
+
     const computedBills = []
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
@@ -489,6 +520,42 @@ class BouyguesTelecomContentScript extends ContentScript {
     const data = await response.json()
     const downloadHref = data._actions.telecharger.action
     return { downloadHref, token }
+  }
+
+  formatAddress(infos) {
+    this.log('info', 'formatAddress starts')
+    let userAddress = {}
+    let formattedAddress = ''
+    if (infos.numero) {
+      userAddress.streetNumber = infos.numero
+      formattedAddress = `${formattedAddress}${infos.numero}`
+    }
+    if (infos.rue) {
+      userAddress.street = infos.rue
+      formattedAddress = `${formattedAddress} ${infos.rue}`
+    }
+    if (infos.complementAdresse1) {
+      userAddress.complement1 = infos.complementAdresse1
+      formattedAddress = `${formattedAddress} ${infos.complementAdresse1}`
+    }
+    if (infos.complementAdresse2) {
+      userAddress.complement2 = infos.complementAdresse2
+      formattedAddress = `${formattedAddress} ${infos.complementAdresse2}`
+    }
+    if (infos.codePostal) {
+      userAddress.postCode = infos.codePostal
+      formattedAddress = `${formattedAddress} ${infos.codePostal}`
+    }
+    if (infos.ville) {
+      userAddress.city = infos.ville
+      formattedAddress = `${formattedAddress} ${infos.ville}`
+    }
+    if (infos.pays) {
+      userAddress.country = infos.pays
+      formattedAddress = `${formattedAddress} ${infos.pays}`
+    }
+    userAddress.formattedAddress = formattedAddress
+    return [userAddress]
   }
 }
 

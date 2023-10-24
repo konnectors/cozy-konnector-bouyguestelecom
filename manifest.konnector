@@ -9,8 +9,8 @@
   "editor": "Cozy",
   "vendor_link": "https://bouyguestelecom.fr/",
   "categories": [
-    "phone_invoice",
-    "isp_invoice"
+    "telecom",
+    "isp"
   ],
   "fields": {},
   "clientSide": true,

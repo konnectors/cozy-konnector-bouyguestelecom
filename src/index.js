@@ -10,7 +10,8 @@ Minilog.enable('bouyguestelecomCCC')
 
 const baseUrl = 'https://bouyguestelecom.fr'
 const monCompteUrl = `${baseUrl}/mon-compte`
-const successUrlPattern = 'PICASSO-FRONT'
+const successUrlPattern =
+  'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
 let billsJSON = []
@@ -46,63 +47,32 @@ window.fetch = async (...args) => {
 let FORCE_FETCH_ALL = false
 
 class BouyguesTelecomContentScript extends ContentScript {
-  async navigateToBasePage() {
-    this.log('info', 'navigateToBasePage starts')
-    await this.goto(baseUrl)
-    await this.waitForElementInWorker('[data-menu-open=user]')
-    // for iphone: force a reload of the page, to have all needed data in localStorage
-    await this.goto(baseUrl)
-    await this.waitForElementInWorker('[data-menu-open=user]')
-    await this.runInWorker('waitForLocalStorage')
-  }
-
-  /**
-   * Wait for a key in localStorage to be present to be sure a page is fully loaded
-   */
-  async waitForLocalStorage() {
-    await waitFor(
-      () => {
-        const result = Boolean(
-          window.localStorage.getItem('bytel-tag-commander/oauth')
-        )
-        return result
-      },
-      {
-        interval: 100,
-        timeout: {
-          milliseconds: 1000,
-          message: new TimeoutError(
-            'waitForLocalStorage timed out after 1 second'
-          )
-        }
-      }
-    )
-  }
-
   async navigateToLoginForm() {
     this.log('info', 'navigateToLoginForm starts')
-    await this.runInWorkerUntilTrue({ method: 'makeLoginFormVisible' })
+    await this.runInWorker(
+      'click',
+      'a[href="https://www.bouyguestelecom.fr/mon-compte"]'
+    )
+    await this.waitForElementInWorker('#bytelid_a360_login')
   }
 
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
-    let srcFromIframe
     if (!account) {
       await this.ensureNotAuthenticated()
+    } else {
+      await this.navigateToMonComptePage()
     }
-    await this.navigateToMonComptePage()
-    if (await this.runInWorker('checkAuthenticated')) {
-      this.log('info', 'Auth detected')
+    const authenticated = await this.runInWorker('checkAuthenticated')
+    this.log('info', `authenticated : ${authenticated}`)
+    if (authenticated) {
       return true
     }
-    this.log('info', 'No auth detected')
-    await this.navigateToBasePage()
-    await this.navigateToLoginForm()
-    srcFromIframe = await this.evaluateInWorker(function getSrcFromIFrame() {
-      return document
-        .querySelector('#bytelid_partial_acoMenu_login')
-        .getAttribute('src')
-    })
+    const srcFromIframe = await this.evaluateInWorker(
+      function getSrcFromIFrame() {
+        return document.querySelector('#bytelid_a360_login').getAttribute('src')
+      }
+    )
     await this.goto(srcFromIframe)
     await this.waitForElementInWorker('#username')
     let credentials = await this.getCredentials()
@@ -123,33 +93,21 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureNotAuthenticated() {
     this.log('info', '🤖 ensureNotAuthenticated starts')
-    await this.navigateToBasePage()
+    await this.navigateToMonComptePage()
+
     const authenticated = await this.runInWorker('checkAuthenticated')
-    if (!authenticated) {
-      return true
+    if (authenticated) {
+      const disconnectButtonSelector = '[class*=tri-power]'
+      const menuButtonSelector = '[class*=tri-menu]'
+      await this.clickAndWait(menuButtonSelector, disconnectButtonSelector)
+      await this.clickAndWait(disconnectButtonSelector, '#bytelid_a360_login')
     }
 
-    if ((await this.isElementInWorker('#user')) === false) {
-      throw new Error(
-        'Could not disconnect from Bouygues telecom, no menu is available in the current page : ' +
-          document.location.href
-      )
-    }
-
-    await this.clickAndWait('[data-menu-open=user]', '[data-id-logout]')
-    await this.clickAndWait('[data-id-logout]', '#menu')
-
-    // will reload the page after 5s if needed this can confirm the deconnexion in degraded cases
-    await this.evaluateInWorker(function reloadAfter5s() {
-      window.setTimeout(() => window.location.reload(), 5000)
-    })
-    await this.runInWorkerUntilTrue({
-      method: 'waitForNotAuthenticated'
-    })
+    return !authenticated
   }
 
   async checkAuthenticated() {
-    this.log('info', 'checkAuthenticated starts')
+    this.log('debug', 'checkAuthenticated starts')
     const passwordField = document.querySelector('#password')
     const loginField = document.querySelector('#username')
     if (passwordField && loginField) {
@@ -157,7 +115,7 @@ class BouyguesTelecomContentScript extends ContentScript {
         loginField,
         passwordField
       )
-      this.log('info', "Sending user's credentials to Pilot")
+      this.log('debug', "Sending user's credentials to Pilot")
       this.sendToPilot({
         userCredentials
       })
@@ -167,19 +125,19 @@ class BouyguesTelecomContentScript extends ContentScript {
       // This url appears when the login has been successfull in the iframe
       // we then redirect the base url to let the next checkAuthenticated validate the login
       this.log(
-        'info',
+        'debug',
         'found success url pattern, redirecting to base page: ' +
           document.location.href
       )
       document.location.href = baseUrl
       return false
     } else {
-      this.log('info', '👅 not success url pattern: ' + document.location.href)
+      this.log('debug', '👅 not success url pattern: ' + document.location.href)
     }
 
     try {
       const tokenExpire = JSON.parse(
-        window.localStorage.getItem('bytel-tag-commander/jwt-data')
+        window.sessionStorage.getItem('SSO_payload')
       )?.exp
 
       if (!tokenExpire) {
@@ -205,7 +163,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async waitForUserCode() {
-    this.log('info', 'Waiting for confirmation code')
+    this.log('debug', 'Waiting for confirmation code')
     await waitFor(
       () => {
         const perfectNotification = document.querySelector('.is-level-2')
@@ -233,7 +191,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async findAndSendCredentials(loginField, passwordField) {
-    this.log('info', 'findAndSendCredentials starts')
+    this.log('debug', 'findAndSendCredentials starts')
     let userLogin = loginField.value
     let userPassword = passwordField.value
     const userCredentials = {
@@ -460,10 +418,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async navigateToMonComptePage() {
     await this.goto(monCompteUrl)
-    await Promise.race([
-      this.waitForElementInWorker('#casiframe'),
-      this.waitForElementInWorker('#notifications')
-    ])
+    await this.waitForElementInWorker('#bytelid_a360_login, #notifications')
   }
 
   async fetchIdentity() {
@@ -522,8 +477,8 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async checkInterception(number) {
-    this.log('info', 'checkInterception starts')
-    this.log('info', `number in checkInterception : ${number}`)
+    this.log('debug', 'checkInterception starts')
+    this.log('debug', `number in checkInterception : ${number}`)
     if (billsJSON.length === number) {
       await this.sendToPilot({ arrayLength: billsJSON.length })
       return true
@@ -546,7 +501,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async computeBills(infos) {
     const result = { phone_invoices: [], isp_invoices: [] }
-    this.log('info', 'computeBills starts')
+    this.log('debug', 'computeBills starts')
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
@@ -608,7 +563,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async checkBillsElementLength(lengthToCheck) {
-    this.log('info', '📍️ checkBillsElementLength starts')
+    this.log('debug', '📍️ checkBillsElementLength starts')
     await waitFor(
       () => {
         this.log('info', `lengthToCheck : ${lengthToCheck}`)

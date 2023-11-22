@@ -43,6 +43,8 @@ window.fetch = async (...args) => {
   return response
 }
 
+let FORCE_FETCH_ALL = false
+
 class BouyguesTelecomContentScript extends ContentScript {
   async navigateToBasePage() {
     this.log('info', 'navigateToBasePage starts')
@@ -271,6 +273,23 @@ class BouyguesTelecomContentScript extends ContentScript {
       await this.saveCredentials(this.store.userCredentials)
     }
 
+    const { trigger } = context
+    // force fetch all data (the long way) when last trigger execution is older than 30 days
+    // or when the last job was an error
+    const isLastJobError =
+      trigger.current_state?.last_failure > trigger.current_state?.last_success
+    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
+    const distanceInDays = getDateDistanceInDays(
+      trigger.current_state?.last_execution
+    )
+    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
+      this.log('info', `isLastJobError: ${isLastJobError}`)
+      this.log('info', `distanceInDays: ${distanceInDays}`)
+      this.log('info', `hasLastExecution: ${hasLastExecution}`)
+      FORCE_FETCH_ALL = true
+    }
+    this.log('info', `FORCE_FETCH_ALL: ${FORCE_FETCH_ALL}`)
+
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()
@@ -305,6 +324,10 @@ class BouyguesTelecomContentScript extends ContentScript {
           })
         ])
       }
+      // only fetch the first page when not in fetch all mode
+      if (!FORCE_FETCH_ALL) {
+        moreBills = false
+      }
     }
     const neededIndex = this.store.arrayLength - 1
     const pageBills = await this.runInWorker('computeBills', {
@@ -327,7 +350,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     })
 
     // saveIdentity in the end to have the first file visible to the user as soon as possible
-    if (this.store.userIdentity) {
+    if (FORCE_FETCH_ALL && this.store.userIdentity) {
       await this.saveIdentity({ contact: this.store.userIdentity })
     }
   }
@@ -623,3 +646,10 @@ connector
   .catch(err => {
     log.warn(err)
   })
+
+function getDateDistanceInDays(dateString) {
+  const distanceMs = Date.now() - new Date(dateString).getTime()
+  const days = 1000 * 60 * 60 * 24
+
+  return Math.floor(distanceMs / days)
+}

@@ -2,6 +2,9 @@ import { ContentScript } from 'cozy-clisk/dist/contentscript'
 import { format } from 'date-fns'
 import waitFor, { TimeoutError } from 'p-wait-for'
 import Minilog from '@cozy/minilog'
+import ky from 'ky'
+import { blobToBase64 } from 'cozy-clisk/dist/contentscript/utils'
+
 const log = Minilog('ContentScript')
 Minilog.enable('bouyguestelecomCCC')
 
@@ -264,14 +267,16 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async fetch(context) {
     this.log('info', '🤖 fetch starts')
-    await this.saveCredentials(this.store.userCredentials)
-    await this.saveIdentity({ contact: this.store.userIdentity })
+    if (this.store.userCredentials) {
+      await this.saveCredentials(this.store.userCredentials)
+    }
+
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
     await this.navigateToBillsPage()
     await this.waitForElementInWorker('div[class="box is-loaded"]')
     await this.runInWorkerUntilTrue({
-      method: 'checkInterception',
+      method: 'waitForInterception',
       args: [1]
     })
 
@@ -306,29 +311,52 @@ class BouyguesTelecomContentScript extends ContentScript {
       lap,
       neededIndex
     })
-    for (const oneBill of pageBills) {
-      const billToDownload = await this.runInWorker('getDownloadHref', oneBill)
-      if (
-        billToDownload.lineNumber.startsWith('06') ||
-        billToDownload.lineNumber.startsWith('07')
-      ) {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'phone_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
-      } else {
-        await this.saveBills([billToDownload], {
-          context,
-          fileIdAttributes: ['vendorRef'],
-          contentType: 'application/pdf',
-          qualificationLabel: 'isp_invoice',
-          subPath: `${billToDownload.lineNumber}`
-        })
-      }
+    this.log('debug', 'Saving phone_invoice bills')
+    await this.saveBills(pageBills.phone_invoices, {
+      context,
+      fileIdAttributes: ['vendorRef'],
+      contentType: 'application/pdf',
+      qualificationLabel: 'phone_invoice'
+    })
+    this.log('debug', 'Saving isp_invoice bills')
+    await this.saveBills(pageBills.isp_invoices, {
+      context,
+      fileIdAttributes: ['vendorRef'],
+      contentType: 'application/pdf',
+      qualificationLabel: 'isp_invoice'
+    })
+
+    // saveIdentity in the end to have the first file visible to the user as soon as possible
+    if (this.store.userIdentity) {
+      await this.saveIdentity({ contact: this.store.userIdentity })
     }
+  }
+
+  async downloadFileInWorker(entry) {
+    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
+    // fetch request necessary to finally get the file
+    this.log('debug', 'downloading file in worker')
+
+    const token = window.sessionStorage.getItem('a360-access_token')
+    const body = await ky
+      .get(entry.fileurl, {
+        headers: {
+          Authorization: `BEARER ${token}`
+        }
+      })
+      .json()
+    const downloadHref = body._actions.telecharger.action
+    const fileurl = `${apiUrl}${downloadHref}`
+
+    const blob = await ky
+      .get(fileurl, {
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      })
+      .blob()
+
+    return await blobToBase64(blob)
   }
 
   async tryAutoLogin(credentials) {
@@ -473,20 +501,32 @@ class BouyguesTelecomContentScript extends ContentScript {
   async checkInterception(number) {
     this.log('info', 'checkInterception starts')
     this.log('info', `number in checkInterception : ${number}`)
-    if (billsJSON.length >= number) {
+    if (billsJSON.length === number) {
       await this.sendToPilot({ arrayLength: billsJSON.length })
       return true
     }
     return false
   }
 
+  async waitForInterception(number) {
+    await waitFor(
+      () => {
+        return this.checkInterception(number)
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return true
+  }
+
   async computeBills(infos) {
+    const result = { phone_invoices: [], isp_invoices: [] }
     this.log('info', 'computeBills starts')
-    const computedBills = []
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
-
     let foundBills = []
     for (let i = 0; i < comptesFacturation.length; i++) {
       const billsForOneLine = comptesFacturation[i].factures
@@ -504,7 +544,7 @@ class BouyguesTelecomContentScript extends ContentScript {
       const formattedDate = format(date, 'yyyy-MM-dd')
       const currency = '€'
       const lineNumber = foundBill.lignes[0].numeroLigne
-      let computedBill = {
+      const computedBill = {
         lineNumber,
         amount,
         currency,
@@ -513,6 +553,7 @@ class BouyguesTelecomContentScript extends ContentScript {
         date,
         vendor: 'Bouygues Telecom',
         vendorRef: foundBill.id,
+        subPath: `${lineNumber}`,
         fileAttributes: {
           metadata: {
             contentAuthor: 'bouyguestelecom.fr',
@@ -524,37 +565,23 @@ class BouyguesTelecomContentScript extends ContentScript {
           }
         }
       }
-      computedBills.push(computedBill)
-    }
-    return computedBills
-  }
-
-  async getDownloadHref(bill) {
-    this.log('info', 'getDownloadHref starts')
-    const hrefAndToken = await this.getFileDownloadHref(bill.fileurl)
-    let goodBill = {
-      ...bill
-    }
-    goodBill.fileurl = `${apiUrl}${hrefAndToken.downloadHref}`
-    goodBill.requestOptions = {
-      headers: {
-        Authorization: `BEARER ${hrefAndToken.token}`
+      if (
+        computedBill.lineNumber.startsWith('06') ||
+        computedBill.lineNumber.startsWith('07')
+      ) {
+        result.phone_invoices.push(computedBill)
+      } else {
+        result.isp_invoices.push(computedBill)
       }
     }
-    return goodBill
-  }
+    function sortFn(a, b) {
+      a.filename > b.filename ? 1 : -1
+    }
 
-  async getFileDownloadHref(url) {
-    this.log('info', 'getFileDownloadHref starts')
-    const token = window.sessionStorage.getItem('a360-access_token')
-    const response = await window.fetch(url, {
-      headers: {
-        Authorization: `BEARER ${token}`
-      }
-    })
-    const data = await response.json()
-    const downloadHref = data._actions.telecharger.action
-    return { downloadHref, token }
+    result.phone_invoices.sort(sortFn)
+    result.isp_invoices.sort(sortFn)
+
+    return result
   }
 
   async checkBillsElementLength(lengthToCheck) {
@@ -587,9 +614,8 @@ connector
   .init({
     additionalExposedMethodsNames: [
       'fetchIdentity',
-      'checkInterception',
+      'waitForInterception',
       'computeBills',
-      'getDownloadHref',
       'makeLoginFormVisible',
       'checkBillsElementLength'
     ]

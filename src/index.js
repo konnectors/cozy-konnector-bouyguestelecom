@@ -25,7 +25,10 @@ window.fetch = async (...args) => {
       .clone()
       .json()
       .then(body => {
-        billsJSON.push(body)
+        if (body?.data?.consulterPersonne) {
+          // filter out other graphql requests
+          billsJSON.push(body)
+        }
         return response
       })
       .catch(err => {
@@ -275,14 +278,27 @@ class BouyguesTelecomContentScript extends ContentScript {
     let moreBills = true
     let lap = 0
     while (moreBills) {
+      const lengthToCheck = await this.evaluateInWorker(
+        function getBillsElementsLength() {
+          return document.querySelectorAll(
+            '.has-background-white > .container > .container > .box.is-loaded'
+          ).length
+        }
+      )
       lap++
       moreBills = await this.isElementInWorker(moreBillsButtonSelector)
       if (moreBills) {
         await this.runInWorker('click', moreBillsButtonSelector)
-        await this.runInWorkerUntilTrue({
-          method: 'checkInterception',
-          args: [lap + 1]
-        })
+        await Promise.all([
+          this.runInWorkerUntilTrue({
+            method: 'waitForInterception',
+            args: [lap + 1]
+          }),
+          this.runInWorkerUntilTrue({
+            method: 'checkBillsElementLength',
+            args: [lengthToCheck]
+          })
+        ])
       }
     }
     const neededIndex = this.store.arrayLength - 1
@@ -540,6 +556,30 @@ class BouyguesTelecomContentScript extends ContentScript {
     const downloadHref = data._actions.telecharger.action
     return { downloadHref, token }
   }
+
+  async checkBillsElementLength(lengthToCheck) {
+    this.log('info', '📍️ checkBillsElementLength starts')
+    await waitFor(
+      () => {
+        this.log('info', `lengthToCheck : ${lengthToCheck}`)
+        const billElementLength = document.querySelectorAll(
+          '.has-background-white > .container > .container > .box.is-loaded'
+        ).length
+        this.log('info', `billElementLength : ${billElementLength}`)
+        if (billElementLength > lengthToCheck) {
+          this.log('info', 'greater')
+          return true
+        }
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+
+    return true
+  }
 }
 
 const connector = new BouyguesTelecomContentScript()
@@ -551,7 +591,7 @@ connector
       'computeBills',
       'getDownloadHref',
       'makeLoginFormVisible',
-      'waitForLocalStorage'
+      'checkBillsElementLength'
     ]
   })
   .catch(err => {

@@ -10,6 +10,7 @@ Minilog.enable('bouyguestelecomCCC')
 
 const baseUrl = 'https://bouyguestelecom.fr'
 const monCompteUrl = `${baseUrl}/mon-compte`
+const billsPageUrl = `${monCompteUrl}/mes-factures`
 const successUrlPattern =
   'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
@@ -409,11 +410,8 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async navigateToBillsPage() {
     this.log('info', 'navigateToBillsPage starts')
-    await this.clickAndWait('#menu', '.has-ending-arrow')
-    await this.evaluateInWorker(() => {
-      document.querySelectorAll('.has-ending-arrow')[1].click()
-    })
-    await this.waitForElementInWorker('#page > section > .container')
+    await this.goto(billsPageUrl)
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
   }
 
   async navigateToMonComptePage() {
@@ -506,13 +504,22 @@ class BouyguesTelecomContentScript extends ContentScript {
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
     let foundBills = []
+    function sortFilenameFn(a, b) {
+      a.filename > b.filename ? 1 : -1
+    }
+    function sortDateFn(a, b) {
+      a.dateFacturation > b.dateFacturation ? 1 : -1
+    }
     for (let i = 0; i < comptesFacturation.length; i++) {
       const billsForOneLine = comptesFacturation[i].factures
       billsForOneLine.forEach(bill => {
         foundBills.push(bill)
       })
     }
-
+    const foundLineNumbers = document.querySelectorAll('.column > .is-nowrap')
+    let i = 0
+    // ensuring array is sorted from mostRecent to older
+    foundBills.sort(sortDateFn)
     for (const foundBill of foundBills) {
       const fileHref = foundBill.facturePDF[0].href
       const amount = foundBill.mntTotFacture
@@ -521,9 +528,10 @@ class BouyguesTelecomContentScript extends ContentScript {
       const date = new Date(foundDate)
       const formattedDate = format(date, 'yyyy-MM-dd')
       const currency = '€'
-      const lineNumber = foundBill.lignes[0].numeroLigne
+      const lineNumber = foundBill.lignes[0]
+        ? foundBill.lignes[0].numeroLigne
+        : null
       const computedBill = {
-        lineNumber,
         amount,
         currency,
         filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
@@ -531,7 +539,6 @@ class BouyguesTelecomContentScript extends ContentScript {
         date,
         vendor: 'Bouygues Telecom',
         vendorRef: foundBill.id,
-        subPath: `${lineNumber}`,
         fileAttributes: {
           metadata: {
             contentAuthor: 'bouyguestelecom.fr',
@@ -543,6 +550,30 @@ class BouyguesTelecomContentScript extends ContentScript {
           }
         }
       }
+      if (lineNumber) {
+        computedBill.lineNumber = lineNumber
+        computedBill.subPath = `${lineNumber}`
+      } else {
+        this.log(
+          'warn',
+          'It seems like no phone number is found, trying to scrape it instead'
+        )
+        // As foundBills has been sorted by date, we can select the element following loops
+        const foundLineNumber = foundLineNumbers[i].textContent.replace(
+          / /g,
+          ''
+        )
+        if (!foundLineNumber) {
+          this.log(
+            'warn',
+            'Cannot find any numbers, even scraping. Cannot qualify the document, aborting execution.'
+          )
+          // dont really know what to put here, using vendor_down for now
+          throw new Error('VENDOR_DOWN')
+        }
+        computedBill.lineNumber = foundLineNumber
+        computedBill.subPath = `${foundLineNumber}`
+      }
       if (
         computedBill.lineNumber.startsWith('06') ||
         computedBill.lineNumber.startsWith('07')
@@ -551,14 +582,10 @@ class BouyguesTelecomContentScript extends ContentScript {
       } else {
         result.isp_invoices.push(computedBill)
       }
+      i++
     }
-    function sortFn(a, b) {
-      a.filename > b.filename ? 1 : -1
-    }
-
-    result.phone_invoices.sort(sortFn)
-    result.isp_invoices.sort(sortFn)
-
+    result.phone_invoices.sort(sortFilenameFn)
+    result.isp_invoices.sort(sortFilenameFn)
     return result
   }
 

@@ -9029,7 +9029,6 @@ _cozy_minilog__WEBPACK_IMPORTED_MODULE_2___default().enable('bouyguestelecomCCC'
 
 const baseUrl = 'https://bouyguestelecom.fr'
 const monCompteUrl = `${baseUrl}/mon-compte`
-const billsPageUrl = `${monCompteUrl}/mes-factures`
 const successUrlPattern =
   'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
@@ -9312,32 +9311,24 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       lap,
       neededIndex
     })
-    if (pageBills.phone_invoices.length) {
-      this.log('debug', 'Saving phone_invoice bills')
-      await this.saveBills(pageBills.phone_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'phone_invoice'
-      })
-    }
-    if (pageBills.isp_invoices.length) {
-      this.log('debug', 'Saving isp_invoice bills')
-      await this.saveBills(pageBills.isp_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'isp_invoice'
-      })
-    }
+    this.log('debug', 'Saving phone_invoice bills')
+    await this.saveBills(pageBills.phone_invoices, {
+      context,
+      fileIdAttributes: ['vendorRef'],
+      contentType: 'application/pdf',
+      qualificationLabel: 'phone_invoice'
+    })
+    this.log('debug', 'Saving isp_invoice bills')
+    await this.saveBills(pageBills.isp_invoices, {
+      context,
+      fileIdAttributes: ['vendorRef'],
+      contentType: 'application/pdf',
+      qualificationLabel: 'isp_invoice'
+    })
 
     // saveIdentity in the end to have the first file visible to the user as soon as possible
     if (FORCE_FETCH_ALL && this.store.userIdentity) {
       await this.saveIdentity({ contact: this.store.userIdentity })
-    }
-    if (pageBills.skippedDocs) {
-      this.log('warn', `${pageBills.skippedDocs} documents skipped`)
-      throw new Error('UNKNOWN_ERROR.PARTIAL_SYNC')
     }
   }
 
@@ -9435,8 +9426,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async navigateToBillsPage() {
     this.log('info', 'navigateToBillsPage starts')
-    await this.goto(billsPageUrl)
-    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
+    await this.clickAndWait('#menu', '.has-ending-arrow')
+    await this.evaluateInWorker(() => {
+      document.querySelectorAll('.has-ending-arrow')[1].click()
+    })
+    await this.waitForElementInWorker('#page > section > .container')
   }
 
   async navigateToMonComptePage() {
@@ -9523,29 +9517,19 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async computeBills(infos) {
-    this.log('debug', 'computeBills starts')
     const result = { phone_invoices: [], isp_invoices: [] }
-    let skippedDocs = 0
+    this.log('debug', 'computeBills starts')
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
     let foundBills = []
-    function sortFilenameFn(a, b) {
-      a.filename > b.filename ? 1 : -1
-    }
-    function sortDateFn(a, b) {
-      a.dateFacturation > b.dateFacturation ? 1 : -1
-    }
     for (let i = 0; i < comptesFacturation.length; i++) {
       const billsForOneLine = comptesFacturation[i].factures
       billsForOneLine.forEach(bill => {
         foundBills.push(bill)
       })
     }
-    const foundLineNumbers = document.querySelectorAll('.column > .is-nowrap')
-    let i = 0
-    // ensuring array is sorted from mostRecent to older
-    foundBills.sort(sortDateFn)
+
     for (const foundBill of foundBills) {
       const fileHref = foundBill.facturePDF[0].href
       const amount = foundBill.mntTotFacture
@@ -9554,10 +9538,9 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       const date = new Date(foundDate)
       const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_5__["default"])(date, 'yyyy-MM-dd')
       const currency = '€'
-      const lineNumber = foundBill.lignes[0]
-        ? foundBill.lignes[0].numeroLigne
-        : null
+      const lineNumber = foundBill.lignes[0].numeroLigne
       const computedBill = {
+        lineNumber,
         amount,
         currency,
         filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
@@ -9565,6 +9548,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         date,
         vendor: 'Bouygues Telecom',
         vendorRef: foundBill.id,
+        subPath: `${lineNumber}`,
         fileAttributes: {
           metadata: {
             contentAuthor: 'bouyguestelecom.fr',
@@ -9576,30 +9560,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           }
         }
       }
-      if (lineNumber) {
-        computedBill.lineNumber = lineNumber
-        computedBill.subPath = `${lineNumber}`
-      } else {
-        this.log(
-          'warn',
-          'It seems like no phone number is found, trying to scrape it instead'
-        )
-        // As foundBills has been sorted by date, we can select the element following loops
-        const foundLineNumber = foundLineNumbers[i].textContent.replace(
-          / /g,
-          ''
-        )
-        if (!foundLineNumber) {
-          this.log(
-            'warn',
-            'Cannot find any numbers, even scraping. Cannot qualify the document, skipping this doc.'
-          )
-          skippedDocs++
-          continue
-        }
-        computedBill.lineNumber = foundLineNumber
-        computedBill.subPath = `${foundLineNumber}`
-      }
       if (
         computedBill.lineNumber.startsWith('06') ||
         computedBill.lineNumber.startsWith('07')
@@ -9608,11 +9568,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       } else {
         result.isp_invoices.push(computedBill)
       }
-      i++
     }
-    result.phone_invoices.sort(sortFilenameFn)
-    result.isp_invoices.sort(sortFilenameFn)
-    result.skippedDocs = skippedDocs
+    function sortFn(a, b) {
+      a.filename > b.filename ? 1 : -1
+    }
+
+    result.phone_invoices.sort(sortFn)
+    result.isp_invoices.sort(sortFn)
+
     return result
   }
 

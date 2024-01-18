@@ -293,24 +293,32 @@ class BouyguesTelecomContentScript extends ContentScript {
       lap,
       neededIndex
     })
-    this.log('debug', 'Saving phone_invoice bills')
-    await this.saveBills(pageBills.phone_invoices, {
-      context,
-      fileIdAttributes: ['vendorRef'],
-      contentType: 'application/pdf',
-      qualificationLabel: 'phone_invoice'
-    })
-    this.log('debug', 'Saving isp_invoice bills')
-    await this.saveBills(pageBills.isp_invoices, {
-      context,
-      fileIdAttributes: ['vendorRef'],
-      contentType: 'application/pdf',
-      qualificationLabel: 'isp_invoice'
-    })
+    if (pageBills.phone_invoices.length) {
+      this.log('debug', 'Saving phone_invoice bills')
+      await this.saveBills(pageBills.phone_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'phone_invoice'
+      })
+    }
+    if (pageBills.isp_invoices.length) {
+      this.log('debug', 'Saving isp_invoice bills')
+      await this.saveBills(pageBills.isp_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'isp_invoice'
+      })
+    }
 
     // saveIdentity in the end to have the first file visible to the user as soon as possible
     if (FORCE_FETCH_ALL && this.store.userIdentity) {
       await this.saveIdentity({ contact: this.store.userIdentity })
+    }
+    if (pageBills.skippedDocs) {
+      this.log('warn', `${pageBills.skippedDocs} documents skipped`)
+      throw new Error('UNKNOWN_ERROR.PARTIAL_SYNC')
     }
   }
 
@@ -498,8 +506,9 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async computeBills(infos) {
-    const result = { phone_invoices: [], isp_invoices: [] }
     this.log('debug', 'computeBills starts')
+    const result = { phone_invoices: [], isp_invoices: [] }
+    let skippedDocs = 0
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
@@ -566,10 +575,10 @@ class BouyguesTelecomContentScript extends ContentScript {
         if (!foundLineNumber) {
           this.log(
             'warn',
-            'Cannot find any numbers, even scraping. Cannot qualify the document, aborting execution.'
+            'Cannot find any numbers, even scraping. Cannot qualify the document, skipping this doc.'
           )
-          // dont really know what to put here, using vendor_down for now
-          throw new Error('VENDOR_DOWN')
+          skippedDocs++
+          continue
         }
         computedBill.lineNumber = foundLineNumber
         computedBill.subPath = `${foundLineNumber}`
@@ -586,6 +595,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     }
     result.phone_invoices.sort(sortFilenameFn)
     result.isp_invoices.sort(sortFilenameFn)
+    result.skippedDocs = skippedDocs
     return result
   }
 

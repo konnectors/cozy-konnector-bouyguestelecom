@@ -59,10 +59,9 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
+    await this.navigateToMonComptePage()
     if (!account) {
       await this.ensureNotAuthenticated()
-    } else {
-      await this.navigateToMonComptePage()
     }
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('info', `authenticated : ${authenticated}`)
@@ -94,14 +93,18 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureNotAuthenticated() {
     this.log('info', '🤖 ensureNotAuthenticated starts')
-    await this.navigateToMonComptePage()
-
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
       const disconnectButtonSelector = '[class*=tri-power]'
-      const menuButtonSelector = '[class*=tri-menu]'
-      await this.clickAndWait(menuButtonSelector, disconnectButtonSelector)
-      await this.clickAndWait(disconnectButtonSelector, '#bytelid_a360_login')
+      await this.goto(baseUrl)
+      await this.waitForElementInWorker('p', { includesText: 'Déconnexion' })
+      await this.runInWorker('click', disconnectButtonSelector)
+      await this.runInWorkerUntilTrue({ method: 'checkSessionStorage' })
+      this.log(
+        'info',
+        'userLogin not found in sessionStorage : logout successful'
+      )
+      await this.navigateToMonComptePage()
     }
 
     return !authenticated
@@ -121,7 +124,7 @@ class BouyguesTelecomContentScript extends ContentScript {
         userCredentials
       })
     }
-
+    await this.checkIfAskingForCode()
     if (document.location.href.includes(successUrlPattern)) {
       // This url appears when the login has been successfull in the iframe
       // we then redirect the base url to let the next checkAuthenticated validate the login
@@ -183,9 +186,27 @@ class BouyguesTelecomContentScript extends ContentScript {
           // Here it has been agreed we're using Infinity timeout as we're dependant on the user's input to continue the execution and we cannot cut off the execution while the user is waiting/writing its code.
           milliseconds: Infinity,
           message: new TimeoutError(
-            'waitForUserCode timed out after 5 minutes, it may be because the user did not fill in the confirmation code in timely manners or because the awaited selector is missing'
+            'waitForUserCode timed out, it may be because the user did not fill in the confirmation code in timely manners or because the awaited selector is missing'
           )
         }
+      }
+    )
+    return true
+  }
+
+  async checkSessionStorage() {
+    this.log('info', '📍️ checkSessionStorage starts')
+    await waitFor(
+      () => {
+        const sessionStorageUserLogin =
+          window.sessionStorage.getItem('a360-user-login')
+        if (!sessionStorageUserLogin) {
+          return true
+        } else return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
       }
     )
     return true
@@ -632,7 +653,8 @@ connector
       'waitForInterception',
       'computeBills',
       'makeLoginFormVisible',
-      'checkBillsElementLength'
+      'checkBillsElementLength',
+      'checkSessionStorage'
     ]
   })
   .catch(err => {

@@ -9715,15 +9715,15 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
     await this.navigateToMonComptePage()
-    await this.navigateToInfosPage()
-    await this.runInWorker('fetchIdentity')
+    const isActive = await this.navigateToInfosPage()
+    await this.runInWorker('fetchIdentity', isActive)
     if (!this.store.userIdentity?.email) {
       throw new Error(
         'getUserDataFromWebsite: Could not find email in user identity'
       )
     }
     return {
-      sourceAccountIdentifier: this.store.userIdentity.email
+      sourceAccountIdentifier: this.store.userIdentity.email[0].address
     }
   }
 
@@ -9812,6 +9812,15 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         qualificationLabel: 'isp_invoice'
       })
     }
+    if (pageBills.other_invoices.length) {
+      this.log('debug', 'Saving other_invoice bills')
+      await this.saveBills(pageBills.other_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'other_invoice'
+      })
+    }
 
     // saveIdentity in the end to have the first file visible to the user as soon as possible
     if (FORCE_FETCH_ALL && this.store.userIdentity) {
@@ -9827,7 +9836,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
     this.log('debug', 'downloading file in worker')
-
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky__WEBPACK_IMPORTED_MODULE_4__["default"].get(entry.fileurl, {
         headers: {
@@ -9835,7 +9843,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         }
       })
       .json()
-    const downloadHref = body._actions.telecharger.action
+    const downloadHref = body._actions
+      ? // isp/phone invoices
+        body._actions.telecharger.action
+      : // physical products invoices
+        body._links.lienTelechargement.href
     const fileurl = `${apiUrl}${downloadHref}`
 
     const blob = await ky__WEBPACK_IMPORTED_MODULE_4__["default"].get(fileurl, {
@@ -9904,15 +9916,24 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       'div[href="/mon-compte/infosperso"] a',
       '.personalInfosAccountDetails'
     )
-    // multiple ajax request update the content. Wait for every content to be present
-    await Promise.all([
+    const isActive = await this.runInWorker('checkIfContractIsActive')
+    if (isActive) {
+      // multiple ajax request update the content. Wait for every content to be present
+      await Promise.all([
+        this.waitForElementInWorker(
+          '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+        ),
+        this.waitForElementInWorker(
+          '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+        )
+      ])
+    } else {
+      // if contract is not an active one, it might not contains any address to scrape
       this.waitForElementInWorker(
         '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-      ),
-      this.waitForElementInWorker(
-        '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
       )
-    ])
+    }
+    return isActive
   }
 
   async navigateToBillsPage() {
@@ -9926,7 +9947,28 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     await this.waitForElementInWorker('#bytelid_a360_login, #notifications')
   }
 
-  async fetchIdentity() {
+  async checkIfContractIsActive() {
+    this.log('info', '📍️ checkIfContractIsActive starts')
+    const fullSessionStorage = window.sessionStorage
+    let wantedKey
+    for (let i = 0; fullSessionStorage.length; i++) {
+      const key = fullSessionStorage.key(i)
+      if (key.match(/^bytel-api\/\[[0-9]*\]\/contrats\/[0-9]*$/)) {
+        wantedKey = key
+        break
+      }
+    }
+    const keyContent = JSON.parse(window.sessionStorage.getItem(wantedKey))
+    if (keyContent.data.data.statut !== 'ACTIF') {
+      this.log('info', 'Actual contract is not active')
+      return false
+    } else {
+      this.log('info', 'Actual contract is active')
+      return true
+    }
+  }
+
+  async fetchIdentity(isActive) {
     this.log('info', 'fetchIdentity starts')
     let mailAddress
     let phoneNumber
@@ -9951,13 +9993,8 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     phoneNumber = infosArray[1].replace(/ /g, '')
     const firstName = document.querySelector('.firstName').textContent
     const familyName = document.querySelector('.name').textContent
-    const addressElement = document.querySelector(
-      '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
-    ).innerHTML
-    const [street, postCodeAndCity, country] = addressElement.split('<br>')
-    const [postCode, city] = postCodeAndCity.split(' ')
     const userIdentity = {
-      email: mailAddress,
+      email: [{ address: mailAddress }],
       phone: [
         {
           type: phoneNumber.startsWith('06' || 0) ? 'mobile' : 'home',
@@ -9967,16 +10004,31 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       name: {
         givenName: firstName,
         familyName
-      },
-      address: [
-        {
-          street,
-          postCode,
-          city,
-          country,
-          formattedAddress: addressElement.replace(/<br>/g, ' ')
-        }
-      ]
+      }
+    }
+    // Apparently, user with resilied contract(s) can still access their bills but might not have postal addresse in their personnal infos.
+    if (isActive) {
+      const addressElement = document.querySelector(
+        '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+      )?.innerHTML
+      if (addressElement) {
+        const [street, postCodeAndCity, country] = addressElement.split('<br>')
+        const [postCode, city] = postCodeAndCity.split(' ')
+        userIdentity.address = [
+          {
+            street,
+            postCode,
+            city,
+            country,
+            formattedAddress: addressElement.replace(/<br>/g, ' ')
+          }
+        ]
+      }
+    } else {
+      this.log(
+        'info',
+        'User seems to have no postal address linked to this contract'
+      )
     }
     await this.sendToPilot({ userIdentity })
   }
@@ -10006,17 +10058,29 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async computeBills(infos) {
     this.log('debug', 'computeBills starts')
-    const result = { phone_invoices: [], isp_invoices: [] }
+    const result = { phone_invoices: [], isp_invoices: [], other_invoices: [] }
     let skippedDocs = 0
     let comptesFacturation =
       billsJSON[infos.neededIndex].data.consulterPersonne.factures
         .comptesFacturation
+    // Physical products invoices are separated from the mobile/isp invoices
+    let otherTypeBills =
+      billsJSON[infos.neededIndex].data.consulterPersonne.rechercherDocuments
+        .documents
+    this.log('info', `otherTypeBills : ${JSON.stringify(otherTypeBills)}`)
     let foundBills = []
     function sortFilenameFn(a, b) {
       a.filename > b.filename ? 1 : -1
     }
     function sortDateFn(a, b) {
-      a.dateFacturation > b.dateFacturation ? 1 : -1
+      // All isp/phone bills
+      if (a.dateFacturation) {
+        a.dateFacturation > b.dateFacturation ? 1 : -1
+      }
+      // other type bills
+      if (a.dateCreation) {
+        a.dateCreation > b.dateCreation ? 1 : -1
+      }
     }
     for (let i = 0; i < comptesFacturation.length; i++) {
       const billsForOneLine = comptesFacturation[i].factures
@@ -10092,8 +10156,41 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       }
       i++
     }
+    this.log('info', 'computing otherBills')
+    // physical products bills had a different structure, needs to be sorted separately
+    otherTypeBills.sort(sortDateFn)
+    for (const otherBill of otherTypeBills) {
+      const fileHref = otherBill.downloadLink[0].href
+      const amount = otherBill.montantTTC
+      const foundDate = otherBill.dateCreation
+      const vendor = 'Bouygues Telecom'
+      const date = new Date(foundDate)
+      const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_5__["default"])(date, 'yyyy-MM-dd')
+      const currency = '€'
+      const computedBill = {
+        amount,
+        currency,
+        filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
+        fileurl: `${apiUrl}${fileHref}`,
+        date,
+        vendor: 'Bouygues Telecom',
+        vendorRef: otherBill.idDocument,
+        fileAttributes: {
+          metadata: {
+            contentAuthor: 'bouyguestelecom.fr',
+            datetime: date,
+            datetimeLabel: 'issueDate',
+            isSubscription: true,
+            issueDate: new Date(),
+            carbonCopy: true
+          }
+        }
+      }
+      result.other_invoices.push(computedBill)
+    }
     result.phone_invoices.sort(sortFilenameFn)
     result.isp_invoices.sort(sortFilenameFn)
+    result.other_invoices.sort(sortFilenameFn)
     result.skippedDocs = skippedDocs
     return result
   }
@@ -10132,7 +10229,8 @@ connector
       'computeBills',
       'makeLoginFormVisible',
       'checkBillsElementLength',
-      'checkSessionStorage'
+      'checkSessionStorage',
+      'checkIfContractIsActive'
     ]
   })
   .catch(err => {

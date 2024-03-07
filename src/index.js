@@ -314,6 +314,19 @@ class BouyguesTelecomContentScript extends ContentScript {
       lap,
       neededIndex
     })
+    this.log('info', `pageBills : ${JSON.stringify(Object.keys(pageBills))}`)
+    this.log(
+      'info',
+      `pageBills - phone_invoices length : ${pageBills.phone_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `pageBills - isp_invoices length : ${pageBills.isp_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `pageBills - other_invoices length: ${pageBills.other_invoices?.length}`
+    )
     if (pageBills.phone_invoices.length) {
       this.log('debug', 'Saving phone_invoice bills')
       await this.saveBills(pageBills.phone_invoices, {
@@ -589,7 +602,6 @@ class BouyguesTelecomContentScript extends ContentScript {
     let otherTypeBills =
       billsJSON[infos.neededIndex].data.consulterPersonne.rechercherDocuments
         .documents
-    this.log('info', `otherTypeBills : ${JSON.stringify(otherTypeBills)}`)
     let foundBills = []
     function sortFilenameFn(a, b) {
       a.filename > b.filename ? 1 : -1
@@ -714,6 +726,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     result.isp_invoices.sort(sortFilenameFn)
     result.other_invoices.sort(sortFilenameFn)
     result.skippedDocs = skippedDocs
+    this.log('info', `filled result : ${JSON.stringify(result)}`)
     return result
   }
 

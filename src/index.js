@@ -95,11 +95,10 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', '🤖 ensureNotAuthenticated starts')
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
-      const disconnectButtonSelector = '[class*=tri-power]'
-      await this.goto(baseUrl)
       await this.waitForElementInWorker('p', { includesText: 'Me déconnecter' })
-      await this.runInWorker('click', disconnectButtonSelector)
-      await this.runInWorkerUntilTrue({ method: 'checkSessionStorage' })
+      await this.runInWorkerUntilTrue({
+        method: 'disconnectAndCheckSessionStorage'
+      })
       this.log(
         'info',
         'userLogin not found in sessionStorage : logout successful'
@@ -194,15 +193,24 @@ class BouyguesTelecomContentScript extends ContentScript {
     return true
   }
 
-  async checkSessionStorage() {
-    this.log('info', '📍️ checkSessionStorage starts')
+  async disconnectAndCheckSessionStorage() {
+    this.log('info', '📍️ disconnectAndCheckSessionStorage starts')
     await waitFor(
       () => {
         const sessionStorageUserLogin =
           window.sessionStorage.getItem('a360-user-login')
         if (!sessionStorageUserLogin) {
           return true
-        } else return false
+        } else {
+          const disconnectButtonSelector = '[class*=tri-power]'
+          const disconnectButton = document.querySelector(
+            disconnectButtonSelector
+          )
+          if (disconnectButton) {
+            disconnectButton.click()
+          }
+          return false
+        }
       },
       {
         interval: 1000,
@@ -766,7 +774,7 @@ connector
       'computeBills',
       'makeLoginFormVisible',
       'checkBillsElementLength',
-      'checkSessionStorage',
+      'disconnectAndCheckSessionStorage',
       'checkIfContractIsActive'
     ]
   })

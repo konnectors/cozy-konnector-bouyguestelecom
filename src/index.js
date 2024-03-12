@@ -97,7 +97,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (authenticated) {
       const disconnectButtonSelector = '[class*=tri-power]'
       await this.goto(baseUrl)
-      await this.waitForElementInWorker('p', { includesText: 'Déconnexion' })
+      await this.waitForElementInWorker('p', { includesText: 'Me déconnecter' })
       await this.runInWorker('click', disconnectButtonSelector)
       await this.runInWorkerUntilTrue({ method: 'checkSessionStorage' })
       this.log(
@@ -692,41 +692,43 @@ class BouyguesTelecomContentScript extends ContentScript {
     }
     this.log('info', 'computing otherBills')
     // physical products bills had a different structure, needs to be sorted separately
-    otherTypeBills.sort(sortDateFn)
-    for (const otherBill of otherTypeBills) {
-      const fileHref = otherBill.downloadLink[0].href
-      const amount = otherBill.montantTTC
-      const foundDate = otherBill.dateCreation
-      const vendor = 'Bouygues Telecom'
-      const date = new Date(foundDate)
-      const formattedDate = format(date, 'yyyy-MM-dd')
-      const currency = '€'
-      const computedBill = {
-        amount,
-        currency,
-        filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
-        fileurl: `${apiUrl}${fileHref}`,
-        date,
-        vendor: 'Bouygues Telecom',
-        vendorRef: otherBill.idDocument,
-        fileAttributes: {
-          metadata: {
-            contentAuthor: 'bouyguestelecom.fr',
-            datetime: date,
-            datetimeLabel: 'issueDate',
-            isSubscription: true,
-            issueDate: new Date(),
-            carbonCopy: true
+    if (otherTypeBills !== undefined && otherTypeBills.length) {
+      this.log('info', 'will sort other by date')
+      otherTypeBills.sort(sortDateFn)
+      for (const otherBill of otherTypeBills) {
+        const fileHref = otherBill.downloadLink[0].href
+        const amount = otherBill.montantTTC
+        const foundDate = otherBill.dateCreation
+        const vendor = 'Bouygues Telecom'
+        const date = new Date(foundDate)
+        const formattedDate = format(date, 'yyyy-MM-dd')
+        const currency = '€'
+        const computedBill = {
+          amount,
+          currency,
+          filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
+          fileurl: `${apiUrl}${fileHref}`,
+          date,
+          vendor: 'Bouygues Telecom',
+          vendorRef: otherBill.idDocument,
+          fileAttributes: {
+            metadata: {
+              contentAuthor: 'bouyguestelecom.fr',
+              datetime: date,
+              datetimeLabel: 'issueDate',
+              isSubscription: true,
+              issueDate: new Date(),
+              carbonCopy: true
+            }
           }
         }
+        result.other_invoices.push(computedBill)
       }
-      result.other_invoices.push(computedBill)
+      result.other_invoices.sort(sortFilenameFn)
     }
     result.phone_invoices.sort(sortFilenameFn)
     result.isp_invoices.sort(sortFilenameFn)
-    result.other_invoices.sort(sortFilenameFn)
     result.skippedDocs = skippedDocs
-    this.log('info', `filled result : ${JSON.stringify(result)}`)
     return result
   }
 

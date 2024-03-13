@@ -48,6 +48,36 @@ window.fetch = async (...args) => {
 let FORCE_FETCH_ALL = false
 
 class BouyguesTelecomContentScript extends ContentScript {
+  async onWorkerEvent({ event, payload }) {
+    if (event === 'loginSubmit') {
+      const { login, password } = payload || {}
+      if (login && password) {
+        this.store.userCredentials = { login, password }
+      } else {
+        this.log('warn', 'Did not manage to intercept credentials')
+      }
+    }
+  }
+
+  async onWorkerReady() {
+    function addClickListener() {
+      document.body.addEventListener('submit', () => {
+        const login = document.querySelector(
+          `input[name="username"][role="textbox"]`
+        )?.value
+        const password = document.querySelector(
+          'input[type="password"][role="textbox"]'
+        )?.value
+        this.bridge.emit('workerEvent', {
+          event: 'loginSubmit',
+          payload: { login, password }
+        })
+      })
+    }
+    this.log('info', 'adding listener')
+    addClickListener.bind(this)()
+  }
+
   async navigateToLoginForm() {
     this.log('info', 'navigateToLoginForm starts')
     await this.runInWorker(
@@ -59,6 +89,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
+    this.bridge.addEventListener('workerEvent', this.onWorkerEvent.bind(this))
     await this.navigateToMonComptePage()
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -75,19 +106,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     )
     await this.goto(srcFromIframe)
     await this.waitForElementInWorker('#username')
-    let credentials = await this.getCredentials()
-    if (credentials && credentials.email && credentials.password) {
-      try {
-        this.log('info', 'Got credentials, trying autologin')
-        await this.tryAutoLogin(credentials)
-      } catch (error) {
-        this.log('warn', 'autoLogin error' + error.message)
-        await this.showLoginFormAndWaitForAuthentication()
-      }
-    } else {
-      this.log('info', 'No credentials found, waiting for user input')
-      await this.showLoginFormAndWaitForAuthentication()
-    }
+    await this.showLoginFormAndWaitForAuthentication()
     return true
   }
 
@@ -111,18 +130,6 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async checkAuthenticated() {
     this.log('debug', 'checkAuthenticated starts')
-    const passwordField = document.querySelector('#password')
-    const loginField = document.querySelector('#username')
-    if (passwordField && loginField) {
-      const userCredentials = await this.findAndSendCredentials.bind(this)(
-        loginField,
-        passwordField
-      )
-      this.log('debug', "Sending user's credentials to Pilot")
-      this.sendToPilot({
-        userCredentials
-      })
-    }
     await this.checkIfAskingForCode()
     if (document.location.href.includes(successUrlPattern)) {
       // This url appears when the login has been successfull in the iframe
@@ -220,20 +227,14 @@ class BouyguesTelecomContentScript extends ContentScript {
     return true
   }
 
-  async findAndSendCredentials(loginField, passwordField) {
-    this.log('debug', 'findAndSendCredentials starts')
-    let userLogin = loginField.value
-    let userPassword = passwordField.value
-    const userCredentials = {
-      email: userLogin,
-      password: userPassword
-    }
-    return userCredentials
-  }
-
   async showLoginFormAndWaitForAuthentication() {
     this.log('info', 'showLoginFormAndWaitForAuthentication start')
     await this.setWorkerState({ visible: true })
+
+    // Keeping this around for cozy-pass solution exploration
+    // const credentials = await this.getCredentials()
+    // this.runInWorker('autoFill', credentials)
+
     await this.runInWorkerUntilTrue({
       method: 'waitForAuthenticated'
     })
@@ -403,18 +404,23 @@ class BouyguesTelecomContentScript extends ContentScript {
     return await blobToBase64(blob)
   }
 
-  async tryAutoLogin(credentials) {
-    this.log('info', 'TryAutologin starts')
-    await this.autoLogin(credentials)
-    await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
-  }
-
-  async autoLogin(credentials) {
-    this.log('info', 'AutoLogin starts')
-    await this.waitForElementInWorker('#username')
-    await this.runInWorker('fillText', '#username', credentials.email)
-    await this.runInWorker('fillText', '#password', credentials.password)
-    await this.runInWorker('click', 'button')
+  async autoFill(credentials) {
+    if (credentials.login) {
+      const loginElement = document.querySelector(
+        'input[name="username"][role="textbox"]'
+      )
+      const passwordElement = document.querySelector(
+        'input[type="password"][role="textbox"]'
+      )
+      if (loginElement) {
+        loginElement.addEventListener('input', () => {
+          loginElement.value = credentials.login
+        })
+        passwordElement.addEventListener('input', () => {
+          passwordElement.value = credentials.password
+        })
+      }
+    }
   }
 
   async makeLoginFormVisible() {
@@ -775,7 +781,8 @@ connector
       'makeLoginFormVisible',
       'checkBillsElementLength',
       'disconnectAndCheckSessionStorage',
-      'checkIfContractIsActive'
+      'checkIfContractIsActive',
+      'autoFill'
     ]
   })
   .catch(err => {

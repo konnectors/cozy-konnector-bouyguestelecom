@@ -521,25 +521,34 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', 'fetchIdentity starts')
     let mailAddress
     let phoneNumber
-    const infosElements = document.querySelectorAll(
-      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+    const infosElements = Array.from(
+      document.querySelectorAll(
+        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+      )
     )
-    const elementsArray = Array.from(infosElements)
-    const infosArray = []
-    for (const info of elementsArray) {
-      const spans = info.querySelectorAll('span')
+    const resultInfo = []
+    const labels = []
+    for (const infoElement of infosElements) {
+      const [labelSpan, valueSpan] = Array.from(
+        infoElement.querySelectorAll('span')
+      )
+      labels.push(labelSpan.textContent)
       if (
-        spans[0].textContent.includes('Email') ||
-        spans[0].textContent.includes('Numéro')
+        labelSpan.textContent.includes('Email') ||
+        labelSpan.textContent.includes('Numéro')
       ) {
-        // Here we select index 1 because index 0 is the section's name
-        const spanInfo = spans[1].textContent
-        infosArray.push(spanInfo)
+        resultInfo.push(valueSpan.textContent)
       }
-      continue
     }
-    mailAddress = infosArray[0]
-    phoneNumber = infosArray[1].replace(/ /g, '')
+    mailAddress = resultInfo[0]
+    if (!mailAddress) {
+      this.log(
+        'warn',
+        `Did not find any email address, following fields found: ${JSON.stringify(labels)}`
+      )
+      throw new Error('No email address found')
+    }
+    phoneNumber = resultInfo[1].replace(/ /g, '')
     const firstName = document.querySelector('.firstName').textContent
     const familyName = document.querySelector('.name').textContent
     const userIdentity = {

@@ -246,22 +246,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     await this.navigateToMonComptePage()
     // Navigation is still mandatory to get the billingAddress if exists, it's not loaded on the first page
     this.store.actualContract = { isActive: await this.navigateToInfosPage() }
-    const possibleIdentity = await this.runInWorker(
-      'checkSessionStorageForIdentity'
-    )
-    this.log(
-      'info',
-      `${
-        possibleIdentity
-          ? '🦜️ Found infos for identity'
-          : '🏮️ No infos for identity, will not be fetched'
-      }`
-    )
-    this.store.possibleIdentity = possibleIdentity
-    let validSAI = await this.runInWorker(
-      'foundValidSourceAccountIdentifier',
-      this.store.wantedKeys
-    )
+    const validSAI = await this.runInWorker('checkSessionStorageForIdentity')
     if (!validSAI) {
       throw new Error(
         'getUserDataFromWebsite: Cannot retrieve a valid sourceAccountIdentifier, check the code'
@@ -548,40 +533,32 @@ class BouyguesTelecomContentScript extends ContentScript {
           'debug',
           `🍇️ sessionStorage length : ${fullSessionStorage.length}`
         )
-        for (let i = 0; i < fullSessionStorage.length - 1; i++) {
-          const key = fullSessionStorage.key(i)
-          if (
-            key.match(
-              /^bytel-api\/\[[0-9]*\]\/personnes\/[0-9]*\/adresses-facturation$/
-            )
-          ) {
-            this.log('debug', '🏮️ Found postal addresses')
-            if (!wantedKeys.billingAddresses) {
-              counter = counter + 1
-              wantedKeys.billingAddresses = key
+        const keyRegex =
+          /bytel-api\/\[\d+\]\/personnes\/\d+(?:\/(adresses-facturation|coordonnees))?$|^bytel-api\/\[\d+\]\/personnes\/\d+$/
+        Object.keys(fullSessionStorage).find(key => {
+          const match = key.match(keyRegex)
+          if (match) {
+            if (match[0].includes('coordonnees')) {
+              this.log('debug', '🏮️ Found mail address')
+              if (!wantedKeys.mails) {
+                counter = counter + 1
+                wantedKeys.mails = key
+              }
+            } else if (match[0].includes('facturation')) {
+              this.log('debug', '🏮️ Found postal addresses')
+              if (!wantedKeys.billingAddresses) {
+                counter = counter + 1
+                wantedKeys.billingAddresses = key
+              }
+            } else {
+              this.log('debug', '🏮️ Found names')
+              if (!wantedKeys.names) {
+                counter = counter + 1
+                wantedKeys.names = key
+              }
             }
-            continue
           }
-          if (key.match(/^bytel-api\/\[[0-9]*\]\/personnes\/[0-9]*$/)) {
-            this.log('debug', '🏮️ Found names')
-            if (!wantedKeys.names) {
-              counter = counter + 1
-              wantedKeys.names = key
-            }
-            continue
-          }
-          if (
-            key.match(/^bytel-api\/\[[0-9]*\]\/personnes\/[0-9]*\/coordonnees$/)
-          ) {
-            this.log('debug', '🏮️ Found mail address')
-            if (!wantedKeys.mails) {
-              counter = counter + 1
-              wantedKeys.mails = key
-            }
-            continue
-          }
-        }
-
+        })
         return counter >= 3
       },
       {
@@ -596,8 +573,8 @@ class BouyguesTelecomContentScript extends ContentScript {
     )
     if (counter >= 1) {
       this.log('info', `Found ${counter}/3 matching keys for identity `)
-      await this.sendToPilot({ wantedKeys })
-      return true
+      const validSAI = await this.foundValidSourceAccountIdentifier(wantedKeys)
+      return validSAI
     } else {
       this.log('warn', 'Found none of the awaited keys for identity')
       return false
@@ -660,7 +637,7 @@ class BouyguesTelecomContentScript extends ContentScript {
       const { nom, prenom } = loginSessionKey.data.data
       validSAI = `${nom} ${prenom}`
     }
-    await this.sendToPilot({ identityKeysContent })
+    await this.sendToPilot({ identityKeysContent, possibleIdentity: true })
     return validSAI
   }
 

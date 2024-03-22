@@ -377,7 +377,6 @@ class BouyguesTelecomContentScript extends ContentScript {
         qualificationLabel: 'other_invoice'
       })
     }
-
     // saveIdentity in the end to have the first file visible to the user as soon as possible
     if (FORCE_FETCH_ALL) {
       if (this.store.possibleIdentity) {
@@ -540,28 +539,16 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', '📍️ checkSessionStorageForIdentity starts')
     let wantedKeys = {}
     let counter = 0
-    let shouldExit = false
 
-    // Tester le sessionStorage toutes les secondes pendant 5 secondes
-    await new Promise(resolve => {
-      const interval = setInterval(() => {
-        // Early exit if everything has been found before timeout
-        if (shouldExit) {
-          this.log('info', 'All awaited keys has been found')
-          clearInterval(interval)
-          resolve()
-        }
+    // Test sessionStorage every seconds for five seconds
+    await waitFor(
+      () => {
         let fullSessionStorage = window.sessionStorage
         this.log(
           'debug',
           `🍇️ sessionStorage length : ${fullSessionStorage.length}`
         )
-        for (let i = 0; fullSessionStorage.length - 1; i++) {
-          // 3 because we just need those 3, could be adjust in the futur if needed
-          if (counter === 3) {
-            shouldExit = true
-            break
-          }
+        for (let i = 0; i < fullSessionStorage.length - 1; i++) {
           const key = fullSessionStorage.key(i)
           if (
             key.match(
@@ -594,13 +581,19 @@ class BouyguesTelecomContentScript extends ContentScript {
             continue
           }
         }
-      }, 1000)
 
-      setTimeout(() => {
-        clearInterval(interval)
-        resolve()
-      }, 5000)
-    })
+        return counter >= 3
+      },
+      {
+        interval: 1000,
+        timeout: {
+          milliseconds: 5000,
+          fallback: async () => {
+            this.log('warn', "⌛️ CheckSessionStorageForIdentity - Time's up")
+          }
+        }
+      }
+    )
     if (counter >= 1) {
       this.log('info', `Found ${counter}/3 matching keys for identity `)
       await this.sendToPilot({ wantedKeys })

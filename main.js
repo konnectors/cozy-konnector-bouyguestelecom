@@ -9160,16 +9160,15 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
     await this.navigateToMonComptePage()
-    const isActive = await this.navigateToInfosPage()
-    await this.runInWorker('fetchIdentity', isActive)
-    if (!this.store.userIdentity?.email) {
+    // Navigation is still mandatory to get the billingAddress if exists, it's not loaded on the first page
+    this.store.actualContract = { isActive: await this.navigateToInfosPage() }
+    const validSAI = await this.runInWorker('checkSessionStorageForIdentity')
+    if (!validSAI) {
       throw new Error(
-        'getUserDataFromWebsite: Could not find email in user identity'
+        'getUserDataFromWebsite: Cannot retrieve a valid sourceAccountIdentifier, check the code'
       )
     }
-    return {
-      sourceAccountIdentifier: this.store.userIdentity.email[0].address
-    }
+    return { sourceAccountIdentifier: validSAI }
   }
 
   async fetch(context) {
@@ -9279,10 +9278,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         qualificationLabel: 'other_invoice'
       })
     }
-
     // saveIdentity in the end to have the first file visible to the user as soon as possible
-    if (FORCE_FETCH_ALL && this.store.userIdentity) {
-      await this.saveIdentity({ contact: this.store.userIdentity })
+    if (FORCE_FETCH_ALL) {
+      if (this.store.possibleIdentity) {
+        await this.runInWorker('fetchIdentity', this.store.identityKeysContent)
+        await this.saveIdentity({ contact: this.store.userIdentity })
+      } else {
+        this.log('warn', 'Identity cannot be fetched')
+      }
     }
     if (pageBills.skippedDocs) {
       this.log('warn', `${pageBills.skippedDocs} documents skipped`)
@@ -9431,67 +9434,192 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     }
   }
 
-  async fetchIdentity(isActive) {
-    this.log('info', 'fetchIdentity starts')
-    let mailAddress
-    let phoneNumber
-    const infosElements = document.querySelectorAll(
-      '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-    )
-    const elementsArray = Array.from(infosElements)
-    const infosArray = []
-    for (const info of elementsArray) {
-      const spans = info.querySelectorAll('span')
-      if (
-        spans[0].textContent.includes('Email') ||
-        spans[0].textContent.includes('Numéro')
-      ) {
-        // Here we select index 1 because index 0 is the section's name
-        const spanInfo = spans[1].textContent
-        infosArray.push(spanInfo)
-      }
-      continue
-    }
-    mailAddress = infosArray[0]
-    phoneNumber = infosArray[1].replace(/ /g, '')
-    const firstName = document.querySelector('.firstName').textContent
-    const familyName = document.querySelector('.name').textContent
-    const userIdentity = {
-      email: [{ address: mailAddress }],
-      phone: [
-        {
-          type: phoneNumber.startsWith('06' || 0) ? 'mobile' : 'home',
-          number: phoneNumber
-        }
-      ],
-      name: {
-        givenName: firstName,
-        familyName
-      }
-    }
-    // Apparently, user with resilied contract(s) can still access their bills but might not have postal addresse in their personnal infos.
-    if (isActive) {
-      const addressElement = document.querySelector(
-        '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
-      )?.innerHTML
-      if (addressElement) {
-        const [street, postCodeAndCity, country] = addressElement.split('<br>')
-        const [postCode, city] = postCodeAndCity.split(' ')
-        userIdentity.address = [
-          {
-            street,
-            postCode,
-            city,
-            country,
-            formattedAddress: addressElement.replace(/<br>/g, ' ')
+  async checkSessionStorageForIdentity() {
+    this.log('info', '📍️ checkSessionStorageForIdentity starts')
+    let wantedKeys = {}
+    let counter = 0
+
+    // Test sessionStorage every seconds for five seconds
+    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
+      () => {
+        let fullSessionStorage = window.sessionStorage
+        this.log(
+          'debug',
+          `🍇️ sessionStorage length : ${fullSessionStorage.length}`
+        )
+        const keyRegex =
+          /bytel-api\/\[\d+\]\/personnes\/\d+(?:\/(adresses-facturation|coordonnees))?$|^bytel-api\/\[\d+\]\/personnes\/\d+$/
+        Object.keys(fullSessionStorage).find(key => {
+          const match = key.match(keyRegex)
+          if (match) {
+            if (match[0].includes('coordonnees')) {
+              this.log('debug', '🏮️ Found mail address')
+              if (!wantedKeys.mails) {
+                counter = counter + 1
+                wantedKeys.mails = key
+              }
+            } else if (match[0].includes('facturation')) {
+              this.log('debug', '🏮️ Found postal addresses')
+              if (!wantedKeys.billingAddresses) {
+                counter = counter + 1
+                wantedKeys.billingAddresses = key
+              }
+            } else {
+              this.log('debug', '🏮️ Found names')
+              if (!wantedKeys.names) {
+                counter = counter + 1
+                wantedKeys.names = key
+              }
+            }
           }
-        ]
+        })
+        return counter >= 3
+      },
+      {
+        interval: 1000,
+        timeout: {
+          milliseconds: 5000,
+          fallback: async () => {
+            this.log('warn', "⌛️ CheckSessionStorageForIdentity - Time's up")
+          }
+        }
+      }
+    )
+    if (counter >= 1) {
+      this.log('info', `Found ${counter}/3 matching keys for identity `)
+      const validSAI = await this.foundValidSourceAccountIdentifier(wantedKeys)
+      return validSAI
+    } else {
+      this.log('warn', 'Found none of the awaited keys for identity')
+      return false
+    }
+  }
+
+  async foundValidSourceAccountIdentifier(neededKeys) {
+    this.log('info', '📍️ foundValidSourceAccountIdentifier starts')
+    let validSAI = null
+    let mailSessionKey = null
+    let loginSessionKey = null
+    let billingAddSessionKey = null
+    const identityKeysContent = {}
+    if (neededKeys.mails) {
+      mailSessionKey = JSON.parse(
+        window.sessionStorage.getItem(neededKeys.mails)
+      )
+      identityKeysContent.contactInfos = mailSessionKey
+    }
+    if (neededKeys.names) {
+      loginSessionKey = JSON.parse(
+        window.sessionStorage.getItem(neededKeys.names)
+      )
+      identityKeysContent.personnalInfos = loginSessionKey
+    }
+    if (neededKeys.billingAddresses) {
+      billingAddSessionKey = JSON.parse(
+        window.sessionStorage.getItem(neededKeys.billingAddresses)
+      )
+      identityKeysContent.postalAddressesInfos = billingAddSessionKey
+    }
+    const foundEmails = mailSessionKey.data.data.emails
+    if (foundEmails.length) {
+      for (const email of foundEmails) {
+        if (email.emailPrincipal) {
+          this.log('info', 'Found principal email in listed mails')
+          validSAI = email.email
+        } else {
+          this.log('info', 'Not principal email')
+        }
       }
     } else {
+      this.log('info', 'No email found in "/coordonees" sessionKey')
+    }
+    const possibleLogins = loginSessionKey.data.data.comptesAcces
+    if (possibleLogins.length) {
+      for (const possibleLogin of possibleLogins) {
+        if (possibleLogin.includes('@')) {
+          validSAI = possibleLogin
+        }
+      }
+    } else {
+      this.log('info', 'No email found in "personnes/[id]" sessionKey')
+    }
+    if (!validSAI) {
       this.log(
-        'info',
-        'User seems to have no postal address linked to this contract'
+        'warn',
+        'No emails found anywhere, fallbacking on firstName + lastName'
       )
+      const { nom, prenom } = loginSessionKey.data.data
+      validSAI = `${nom} ${prenom}`
+    }
+    await this.sendToPilot({ identityKeysContent, possibleIdentity: true })
+    return validSAI
+  }
+
+  async fetchIdentity(identityInfos) {
+    this.log('info', 'fetchIdentity starts')
+    const { contactInfos, personnalInfos, postalAddressesInfos } = identityInfos
+    const contactData = contactInfos?.data?.data
+    const personnalData = personnalInfos?.data?.data
+    const postalData = postalAddressesInfos?.data?.data
+    let userIdentity = {}
+    if (personnalData) {
+      this.log('info', '🦜️Fetching personnalData')
+      const { nom: familyName, prenom: givenName } = personnalData
+      userIdentity.name = { givenName, familyName }
+    } else {
+      this.log('warn', '🏮️ No personnalData at all')
+    }
+    if (contactData) {
+      this.log('info', '🦜️Fetching contactData')
+      if (contactData.emails.length) {
+        this.log('info', '🦜️Found emails')
+        userIdentity.email = []
+        for (const email of contactData.emails) {
+          if (email.emailPrincipal) {
+            userIdentity.email.push({ address: email.email })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - emails found')
+      }
+      if (contactData.telephones.length) {
+        this.log('info', '🦜️Found phones')
+        userIdentity.phone = []
+        for (const phone of contactData.telephones) {
+          if (phone.numero) {
+            userIdentity.phone.push({
+              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
+              number: phone.numero
+            })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - phones found')
+      }
+    } else {
+      this.log('warn', '🏮️ No contactData at all')
+    }
+    if (postalData) {
+      this.log('info', '🦜️Fetching postalData')
+      if (postalData.items.length) {
+        this.log('info', '🦜️Found addresses')
+        userIdentity.address = []
+        for (const item of postalData.items) {
+          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
+          userIdentity.address.push({
+            number: item.numero,
+            street: item.rue,
+            postCode: item.codePostal,
+            city: item.ville,
+            country: item.pays,
+            formattedAddress
+          })
+        }
+      } else {
+        this.log('info', '🏮️ No postalData items found')
+      }
+    } else {
+      this.log('warn', '🏮️ No postalData at all')
     }
     await this.sendToPilot({ userIdentity })
   }
@@ -9695,6 +9823,8 @@ connector
       'makeLoginFormVisible',
       'checkBillsElementLength',
       'disconnectAndCheckSessionStorage',
+      'checkSessionStorageForIdentity',
+      'foundValidSourceAccountIdentifier',
       'checkIfContractIsActive',
       'autoFill'
     ]

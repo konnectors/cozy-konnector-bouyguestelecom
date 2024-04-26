@@ -9680,11 +9680,15 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     }
     const foundLineNumbers = document.querySelectorAll('.column > .is-nowrap')
     let i = 0
-    // ensuring array is sorted from mostRecent to older
+    // ensuring array is sorted from most recent to older
     foundBills.sort(sortDateFn)
     for (const foundBill of foundBills) {
       const fileHref = foundBill.facturePDF[0].href
-      const amount = foundBill.mntTotFacture
+      // Here we need to check if "mntTotalLigne" is present because this amount contains third-party services payments (like bus tickets payed by phone for example).
+      // If this field is not present, that means the user has no third-party services payment on current bill so we keep using "mntTotalLigne" as it is the subscription's price.
+      const amount = foundBill.lignes[0].mntTotalLigne
+        ? foundBill.lignes[0].mntTotalLigne
+        : foundBill.mntTotFacture
       const foundDate = foundBill.dateFacturation
       const vendor = 'Bouygues Telecom'
       const date = new Date(foundDate)

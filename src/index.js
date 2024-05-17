@@ -607,11 +607,15 @@ class BouyguesTelecomContentScript extends ContentScript {
       identityKeysContent.postalAddressesInfos = billingAddSessionKey
     }
     const foundEmails = mailSessionKey.data.data.emails
-    if (foundEmails.length) {
+    if ((foundEmails ?? false) && foundEmails.length) {
       for (const email of foundEmails) {
         if (email.emailPrincipal) {
           this.log('info', 'Found principal email in listed mails')
           validSAI = email.email
+          this.log(
+            'info',
+            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
+          )
         } else {
           this.log('info', 'Not principal email')
         }
@@ -620,22 +624,46 @@ class BouyguesTelecomContentScript extends ContentScript {
       this.log('info', 'No email found in "/coordonees" sessionKey')
     }
     const possibleLogins = loginSessionKey.data.data.comptesAcces
-    if (possibleLogins.length) {
+    if ((possibleLogins ?? false) && possibleLogins.length && !validSAI) {
+      let i = 1
       for (const possibleLogin of possibleLogins) {
         if (possibleLogin.includes('@')) {
+          this.log('info', `possibleLogin entry n°${i} match email condition`)
           validSAI = possibleLogin
+          this.log(
+            'info',
+            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
+          )
+          break
         }
+        i++
       }
     } else {
-      this.log('info', 'No email found in "personnes/[id]" sessionKey')
+      validSAI
+        ? this.log(
+            'info',
+            '"personnes/[id]" sessionKey not checked, already found a validSAI'
+          )
+        : this.log(
+            'info',
+            'No possibleLogins found in "personnes/[id]" sessionKey'
+          )
     }
     if (!validSAI) {
       this.log(
-        'warn',
-        'No emails found anywhere, fallbacking on firstName + lastName'
+        'info',
+        'No email found in available sessionKeys, last chance finding a validSAI with pure scraping'
       )
-      const { nom, prenom } = loginSessionKey.data.data
-      validSAI = `${nom} ${prenom}`
+      validSAI = await this.scrapValidSAI()
+      this.log('info', `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`)
+      if (!validSAI) {
+        this.log(
+          'warn',
+          'No emails found anywhere, fallbacking on firstName + lastName'
+        )
+        const { nom, prenom } = loginSessionKey.data.data
+        validSAI = `${nom} ${prenom}`
+      }
     }
     await this.sendToPilot({ identityKeysContent, possibleIdentity: true })
     return validSAI
@@ -900,6 +928,29 @@ class BouyguesTelecomContentScript extends ContentScript {
     )
 
     return true
+  }
+
+  async scrapValidSAI() {
+    this.log('info', '📍️ scrapValidSAI starts')
+    const personalAccountDetailsElement = document.querySelector(
+      '.personalInfosAccountDetails'
+    )
+    const infosBlocs = personalAccountDetailsElement.querySelectorAll(
+      '.flexContent:not(.flexCenter)'
+    )
+    let emailBloc
+    for (const infosBloc of infosBlocs) {
+      if (infosBloc.innerHTML.includes('Email de connexion')) {
+        emailBloc = infosBloc
+        break
+      }
+    }
+    const wantedSpan = emailBloc.querySelectorAll('span:not([class])')
+    // first element is the title of the bloc, second one the wanted email value
+    const foundEmail = wantedSpan[1]?.textContent.includes('@')
+      ? wantedSpan[1].textContent
+      : null
+    return foundEmail
   }
 }
 

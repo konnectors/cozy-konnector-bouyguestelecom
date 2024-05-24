@@ -1,5 +1,5 @@
 {
-  "version": "2.11.0",
+  "version": "2.12.0",
   "name": "Bouygues Telecom",
   "type": "konnector",
   "language": "node",
@@ -9,7 +9,6 @@
   "editor": "Cozy",
   "vendor_link": "https://bouyguestelecom.fr/",
   "categories": [
-    "telecom",
     "isp"
   ],
   "fields": {},

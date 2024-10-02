@@ -78,15 +78,6 @@ class BouyguesTelecomContentScript extends ContentScript {
     addClickListener.bind(this)()
   }
 
-  async navigateToLoginForm() {
-    this.log('info', 'navigateToLoginForm starts')
-    await this.runInWorker(
-      'click',
-      'a[href="https://www.bouyguestelecom.fr/mon-compte"]'
-    )
-    await this.waitForElementInWorker('#bytelid_a360_login')
-  }
-
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
     this.bridge.addEventListener('workerEvent', this.onWorkerEvent.bind(this))
@@ -496,7 +487,17 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async navigateToMonComptePage() {
     await this.goto(monCompteUrl)
-    await this.waitForElementInWorker('#bytelid_a360_login, #notifications')
+    await Promise.race([
+      this.waitForElementInWorker('#bytelid_a360_login, #notifications'),
+      this.checkUnavailable()
+    ])
+  }
+
+  async checkUnavailable() {
+    this.waitForElementInWorker('body', {
+      includesText: 'Cette page est temporairement indisponible'
+    })
+    throw new Error('VENDOR_DOWN')
   }
 
   async checkIfContractIsActive() {

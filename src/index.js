@@ -105,7 +105,14 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', '🤖 ensureNotAuthenticated starts')
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
-      await this.waitForElementInWorker('p', { includesText: 'Me déconnecter' })
+      try {
+        await this.waitForElementInWorker('p', {
+          includesText: 'Me déconnecter'
+        })
+      } catch (err) {
+        this.log('error', err.message)
+        throw new Error('VENDOR_DOWN.NO_DISCONNECT_LINK')
+      }
       await this.runInWorkerUntilTrue({
         method: 'disconnectAndCheckSessionStorage'
       })
@@ -488,7 +495,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   async navigateToMonComptePage() {
     await this.goto(monCompteUrl)
     await Promise.race([
-      this.waitForElementInWorker('#bytelid_a360_login, #notifications'),
+      this.waitForElementInWorker('#bytelid_a360_login, .is-loaded'),
       this.checkUnavailable()
     ])
   }

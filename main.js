@@ -9058,15 +9058,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     addClickListener.bind(this)()
   }
 
-  async navigateToLoginForm() {
-    this.log('info', 'navigateToLoginForm starts')
-    await this.runInWorker(
-      'click',
-      'a[href="https://www.bouyguestelecom.fr/mon-compte"]'
-    )
-    await this.waitForElementInWorker('#bytelid_a360_login')
-  }
-
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
     this.bridge.addEventListener('workerEvent', this.onWorkerEvent.bind(this))
@@ -9094,7 +9085,14 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     this.log('info', '🤖 ensureNotAuthenticated starts')
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
-      await this.waitForElementInWorker('p', { includesText: 'Me déconnecter' })
+      try {
+        await this.waitForElementInWorker('p', {
+          includesText: 'Me déconnecter'
+        })
+      } catch (err) {
+        this.log('error', err.message)
+        throw new Error('VENDOR_DOWN.NO_DISCONNECT_LINK')
+      }
       await this.runInWorkerUntilTrue({
         method: 'disconnectAndCheckSessionStorage'
       })
@@ -9474,7 +9472,17 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async navigateToMonComptePage() {
     await this.goto(monCompteUrl)
-    await this.waitForElementInWorker('#bytelid_a360_login, #notifications')
+    await Promise.race([
+      this.waitForElementInWorker('#bytelid_a360_login, .is-loaded'),
+      this.checkUnavailable()
+    ])
+  }
+
+  async checkUnavailable() {
+    this.waitForElementInWorker('body', {
+      includesText: 'Cette page est temporairement indisponible'
+    })
+    throw new Error('VENDOR_DOWN')
   }
 
   async checkIfContractIsActive() {

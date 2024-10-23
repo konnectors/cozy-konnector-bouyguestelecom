@@ -171,7 +171,11 @@ class BouyguesTelecomContentScript extends ContentScript {
       const tokenExpire = JSON.parse(
         window.sessionStorage.getItem('SSO_payload')
       )?.exp
-
+      const userId = window.sessionStorage.getItem('a360-user-id')
+      if (userId) {
+        this.log('debug', 'userId found in sessionStorage, user logged')
+        return true
+      }
       if (!tokenExpire) {
         this.log('debug', 'checkauthenticated no tokenExpire')
         return false
@@ -266,6 +270,7 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
+    await this.waitForRequestInterception('coordinates')
     this.log(
       'info',
       `this.store. : ${JSON.stringify(this.store.identityInfos)}`
@@ -322,14 +327,35 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async navigateToMonComptePage() {
     await this.goto(monCompteUrl)
-    await this.waitForElementInWorker('#bytelid_a360_login, .is-loaded')
+    await Promise.race([
+      this.waitForElementInWorker('#bytelid_a360_login'),
+      this.runInWorkerUntilTrue({ method: 'waitForUserId' })
+    ])
+  }
+
+  async waitForUserId() {
+    this.log('info', '📍️ waitForUserId starts')
+    let userId
+    await waitFor(
+      () => {
+        const sessionStorageId = window.sessionStorage.getItem('a360-user-id')
+        if (!sessionStorageId) return false
+        userId = sessionStorageId
+        return true
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return userId
   }
 }
 
 const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
-    additionalExposedMethodsNames: ['getIframeSrc']
+    additionalExposedMethodsNames: ['getIframeSrc', 'waitForUserId']
   })
   .catch(err => {
     log.warn(err)

@@ -271,11 +271,29 @@ class BouyguesTelecomContentScript extends ContentScript {
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
     await this.waitForRequestInterception('coordinates')
-    this.log(
-      'info',
-      `this.store. : ${JSON.stringify(this.store.identityInfos)}`
+    let validSAI
+    const coordinateEmail = await this.getUserMainEmail(
+      this.store.coordinates.response?.emails
     )
-    await this.waitForElementInWorker('[pause]')
+    const savedCredentials = await this.getCredentials()
+    // Prefer user Email instead of login if available
+    if (!coordinateEmail) {
+      validSAI = this.store.userCredentials.login || savedCredentials.login
+    } else {
+      validSAI = coordinateEmail
+    }
+    return { sourceAccountIdentifier: validSAI }
+  }
+
+  async getUserMainEmail(emailsArray) {
+    this.log('info', '📍️ getUserMainEmail starts')
+    for (const email of emailsArray) {
+      if (email.emailPrincipal) {
+        return email.email
+      }
+    }
+    this.log('warn', 'No main email found')
+    return null
   }
 
   async fetch(context) {
@@ -283,6 +301,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (this.store.userCredentials) {
       await this.saveCredentials(this.store.userCredentials)
     }
+    await this.waitForElementInWorker('[pause]')
   }
 
   async navigateToInfosPage() {

@@ -75,7 +75,6 @@ class BouyguesTelecomContentScript extends ContentScript {
     this.log('info', 'adding listener')
     document
       .querySelector('form[data-roles="inputForm"] button[type="submit"]')
-      // .querySelector('form[data-roles="inputForm"]')
       .addEventListener('click', () => {
         const login = document.querySelector(
           `input[name="username"][role="textbox"]`
@@ -100,9 +99,9 @@ class BouyguesTelecomContentScript extends ContentScript {
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
     await this.navigateToMonComptePage()
-    if (!account) {
-      await this.ensureNotAuthenticated()
-    }
+    // if (!account) {
+    //   await this.ensureNotAuthenticated()
+    // }
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('info', `authenticated : ${authenticated}`)
     if (authenticated) {
@@ -256,12 +255,10 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async showLoginFormAndWaitForAuthentication() {
     this.log('info', 'showLoginFormAndWaitForAuthentication start')
-    await this.setWorkerState({ visible: true })
-
     // Keeping this around for cozy-pass solution exploration
     // const credentials = await this.getCredentials()
-    // this.runInWorker('autoFill', credentials)
-
+    // await this.runInWorker('autoFill', credentials)
+    await this.setWorkerState({ visible: true })
     await this.runInWorkerUntilTrue({
       method: 'waitForAuthenticated'
     })
@@ -301,7 +298,88 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (this.store.userCredentials) {
       await this.saveCredentials(this.store.userCredentials)
     }
-    await this.waitForElementInWorker('[pause]')
+    this.store.userId = await this.runInWorker('waitForUserId')
+    this.store.userIdentity = await this.runInWorker(
+      'fetchIdentity',
+      this.store.userId,
+      this.store.coordinates
+    )
+    if (this.store.userIdentity) {
+      await this.saveIdentity({ contact: this.store.userIdentity })
+    }
+    // await this.waitForElementInWorker('[pause]')
+  }
+
+  async fetchIdentity(userId, userCoordinates) {
+    this.log('info', 'fetchIdentity starts')
+    const identityStorageItem = JSON.parse(
+      window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+    )
+    const mailsData = userCoordinates.response?.emails
+    const phonesData = userCoordinates.response?.telephones
+    const personnalData = identityStorageItem.value?.data?.consulterPersonne
+    const postalData = userCoordinates.response?.adressesPostales
+    let userIdentity = {}
+    if (personnalData) {
+      this.log('info', '🦜️Fetching personnalData')
+      const { nom: familyName, prenom: givenName } = personnalData
+      userIdentity.name = { givenName, familyName }
+    } else {
+      this.log('warn', '🏮️ No personnalData at all')
+    }
+    if (mailsData) {
+      this.log('info', '🦜️Fetching mailsData')
+      if (mailsData.length) {
+        this.log('info', '🦜️Found emails')
+        userIdentity.email = []
+        for (const email of mailsData) {
+          if (email.emailPrincipal) {
+            userIdentity.email.push({ address: email.email })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - emails found')
+      }
+      if (phonesData.length) {
+        this.log('info', '🦜️Found phones')
+        userIdentity.phone = []
+        for (const phone of phonesData) {
+          if (phone.numero) {
+            userIdentity.phone.push({
+              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
+              number: phone.numero
+            })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - phones found')
+      }
+    } else {
+      this.log('warn', '🏮️ No contactData at all')
+    }
+    if (postalData) {
+      this.log('info', '🦜️Fetching postalData')
+      if (postalData.length) {
+        this.log('info', '🦜️Found addresses')
+        userIdentity.address = []
+        for (const item of postalData) {
+          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
+          userIdentity.address.push({
+            number: item.numero,
+            street: item.rue,
+            postCode: item.codePostal,
+            city: item.ville,
+            country: item.pays,
+            formattedAddress
+          })
+        }
+      } else {
+        this.log('info', '🏮️ No postalData items found')
+      }
+    } else {
+      this.log('warn', '🏮️ No postalData at all')
+    }
+    return userIdentity
   }
 
   async navigateToInfosPage() {
@@ -374,7 +452,11 @@ class BouyguesTelecomContentScript extends ContentScript {
 const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
-    additionalExposedMethodsNames: ['getIframeSrc', 'waitForUserId']
+    additionalExposedMethodsNames: [
+      'getIframeSrc',
+      'waitForUserId',
+      'fetchIdentity'
+    ]
   })
   .catch(err => {
     log.warn(err)

@@ -124,9 +124,9 @@ class BouyguesTelecomContentScript extends ContentScript {
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
     await this.navigateToMonComptePage()
-    // if (!account) {
-    //   await this.ensureNotAuthenticated()
-    // }
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('info', `authenticated : ${authenticated}`)
     if (authenticated) {
@@ -154,7 +154,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
       try {
-        await this.waitForElementInWorker('p', {
+        await this.waitForElementInWorker('p, a', {
           includesText: 'Me déconnecter'
         })
       } catch (err) {
@@ -258,9 +258,12 @@ class BouyguesTelecomContentScript extends ContentScript {
         const sessionStorageUserLogin =
           window.sessionStorage.getItem('a360-user-login')
         if (!sessionStorageUserLogin) {
+          this.log('debug', 'No session login found, not connected')
           return true
         } else {
-          const disconnectButtonSelector = '[class*=tri-power]'
+          this.log('debug', 'Session found, disconnecting ...')
+          const disconnectButtonSelector =
+            '[data-entrylink="deconnexion"] > div > a'
           const disconnectButton = document.querySelector(
             disconnectButtonSelector
           )
@@ -816,16 +819,10 @@ connector
       'fetchIdentity',
       'fetchLinesData',
       'checkInterception',
-      'checkBillsElementLength'
+      'checkBillsElementLength',
+      'disconnectAndCheckSessionStorage'
     ]
   })
   .catch(err => {
     log.warn(err)
   })
-
-function getDateDistanceInDays(dateString) {
-  const distanceMs = Date.now() - new Date(dateString).getTime()
-  const days = 1000 * 60 * 60 * 24
-
-  return Math.floor(distanceMs / days)
-}

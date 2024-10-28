@@ -18,13 +18,42 @@ const successUrlPattern =
   'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
+let billsJSON
+// For obscure reasons, fetch override in requestInterceptor is not working as intended.
+// I cannot find a way to fix this so until the problem is solved, we will do the override
+// directly into the konnector's code as it works from here.
+const fetchOriginal = window.fetch
+
+window.fetch = async (...args) => {
+  const response = await fetchOriginal(...args)
+  if (typeof args[0] === 'string' && args[0].includes('/graphql')) {
+    await response
+      .clone()
+      .json()
+      .then(body => {
+        if (body?.data?.consulterPersonne?.factures) {
+          // filter out other graphql requests
+          billsJSON = { ...body.data.consulterPersonne }
+        }
+        return response
+      })
+      .catch(err => {
+        // eslint-disable-next-line no-console
+        console.log(err)
+        return response
+      })
+  }
+  return response
+}
+
 const requestInterceptor = new RequestInterceptor([
-  {
-    identifier: 'graphql',
-    method: 'POST',
-    url: '/graphql',
-    serialization: 'json'
-  },
+  // {
+  //   identifier: 'graphql',
+  //   method: 'POST',
+  //   url: 'https://api.bouyguestelecom.fr/graphql',
+  //   exact: true,
+  //   serialization: 'json'
+  // },
   {
     identifier: 'coordinates',
     method: 'POST',
@@ -51,10 +80,6 @@ class BouyguesTelecomContentScript extends ContentScript {
         if (response.data?.consulterPersonne?.factures) {
           this.store.userBills = response.data.consulterPersonne.factures
           this.log('debug', 'Bills intercepted')
-        }
-        if (response.data?.consulterPersonne?.prenom) {
-          this.store.identityInfos = response.data.consulterPersonne
-          this.log('debug', 'Identity intercepted')
         }
       } else {
         this.store[identifier] = { response }
@@ -299,6 +324,48 @@ class BouyguesTelecomContentScript extends ContentScript {
       await this.saveCredentials(this.store.userCredentials)
     }
     this.store.userId = await this.runInWorker('waitForUserId')
+
+    const bills = await this.getBills()
+    this.log(
+      'info',
+      `bills - phone_invoices length : ${bills.phone_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `bills - isp_invoices length : ${bills.isp_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `bills - other_invoices length: ${bills.other_invoices?.length}`
+    )
+    if (bills.phone_invoices.length) {
+      this.log('debug', 'Saving phone_invoice bills')
+      await this.saveBills(bills.phone_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'phone_invoice'
+      })
+    }
+    if (bills.isp_invoices.length) {
+      this.log('debug', 'Saving isp_invoice bills')
+      await this.saveBills(bills.isp_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'isp_invoice'
+      })
+    }
+    if (bills.other_invoices.length) {
+      this.log('debug', 'Saving other_invoice bills')
+      await this.saveBills(bills.other_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'other_invoice'
+      })
+    }
+
     this.store.userIdentity = await this.runInWorker(
       'fetchIdentity',
       this.store.userId,
@@ -308,6 +375,297 @@ class BouyguesTelecomContentScript extends ContentScript {
       await this.saveIdentity({ contact: this.store.userIdentity })
     }
     // await this.waitForElementInWorker('[pause]')
+  }
+
+  async getBills() {
+    this.log('info', '📍️ getBills starts')
+    this.store.linesData = await this.runInWorker(
+      'fetchLinesData',
+      this.store.userId
+    )
+    await this.runInWorker(
+      'click',
+      '[data-entrylink="acoFactures"] [role="button"]'
+    )
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
+    const moreBillsButtonSelector =
+      '#page > section > .container > .has-text-centered > a'
+    await this.waitForElementInWorker(moreBillsButtonSelector)
+    if (await this.isElementInWorker(moreBillsButtonSelector)) {
+      await this.loadMoreBills(moreBillsButtonSelector)
+    }
+    const billsData = await this.runInWorkerUntilTrue({
+      method: 'checkInterception'
+    })
+    const finalBills = await this.computeBills(billsData)
+    return finalBills
+  }
+
+  async loadMoreBills(selector) {
+    this.log('info', '📍️ loadMoreBills starts')
+    const wantedElement = selector
+    let hasMoreBills = true
+    while (hasMoreBills) {
+      const lengthToCheck = await this.evaluateInWorker(
+        function getBillsElementsLength() {
+          return document.querySelectorAll(
+            '.has-background-white > .container > .container > .box.is-loaded'
+          ).length
+        }
+      )
+      hasMoreBills = await this.isElementInWorker(wantedElement)
+      if (hasMoreBills) {
+        await this.runInWorker('click', wantedElement)
+        await Promise.all([
+          this.runInWorkerUntilTrue({
+            method: 'checkInterception'
+          }),
+          this.runInWorkerUntilTrue({
+            method: 'checkBillsElementLength',
+            args: [lengthToCheck]
+          })
+        ])
+      }
+    }
+  }
+
+  async checkBillsElementLength(lengthToCheck) {
+    this.log('debug', '📍️ checkBillsElementLength starts')
+    await waitFor(
+      () => {
+        this.log('info', `lengthToCheck : ${lengthToCheck}`)
+        const billElementLength = document.querySelectorAll(
+          '.has-background-white > .container > .container > .box.is-loaded'
+        ).length
+        this.log('info', `billElementLength : ${billElementLength}`)
+        if (billElementLength > lengthToCheck) {
+          this.log('info', 'more bills have been loaded')
+          return true
+        }
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+
+    return true
+  }
+
+  async computeBills(data) {
+    this.log('info', '📍️ computeBills starts')
+
+    const result = { phone_invoices: [], isp_invoices: [], other_invoices: [] }
+    let skippedDocs = 0
+    let comptesFacturation = data.factures.comptesFacturation
+    // Physical products invoices are separated from the mobile/isp invoices
+    let otherTypeBills = data.rechercherDocuments.documents
+    let foundBills = []
+    function sortFilenameFn(a, b) {
+      a.filename > b.filename ? 1 : -1
+    }
+    function sortDateFn(a, b) {
+      // All isp/phone bills
+      if (a.dateFacturation) {
+        a.dateFacturation > b.dateFacturation ? 1 : -1
+      }
+      // other type bills
+      if (a.dateCreation) {
+        a.dateCreation > b.dateCreation ? 1 : -1
+      }
+    }
+    for (let i = 0; i < comptesFacturation.length; i++) {
+      const billsForOneLine = comptesFacturation[i].factures
+      billsForOneLine.forEach(bill => {
+        foundBills.push(bill)
+      })
+    }
+    const foundLineNumbers = document.querySelectorAll('.column > .is-nowrap')
+    let i = 0
+    // ensuring array is sorted from most recent to older
+    foundBills.sort(sortDateFn)
+    for (const foundBill of foundBills) {
+      const fileHref = foundBill.facturePDF[0].href
+      // Here we need to check if "mntTotalLigne" is present because this amount contains third-party services payments (like bus tickets payed by phone for example).
+      // If this field is not present (and "lignes" can be empty or missing too), that means the user has no third-party services payment on current bill so we keep using "mntTotalLigne" as it is the subscription's price.
+      const amount =
+        foundBill.lignes[0]?.mntTotalLigne ?? foundBill.mntTotFacture
+      const foundDate = foundBill.dateFacturation
+      const vendor = 'Bouygues Telecom'
+      const date = new Date(foundDate)
+      const formattedDate = format(date, 'yyyy-MM-dd')
+      const currency = '€'
+      const lineNumber = foundBill.lignes[0]
+        ? foundBill.lignes[0].numeroLigne
+        : null
+      const computedBill = {
+        amount,
+        currency,
+        filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
+        fileurl: `${apiUrl}${fileHref}`,
+        date,
+        vendor: 'Bouygues Telecom',
+        vendorRef: foundBill.id,
+        fileAttributes: {
+          metadata: {
+            contentAuthor: 'bouyguestelecom.fr',
+            datetime: date,
+            datetimeLabel: 'issueDate',
+            isSubscription: true,
+            issueDate: new Date(),
+            carbonCopy: true
+          }
+        }
+      }
+      if (lineNumber) {
+        computedBill.lineNumber = lineNumber
+        computedBill.subPath = `${lineNumber}`
+      } else {
+        this.log(
+          'warn',
+          'It seems like no phone number is found, trying to scrape it instead'
+        )
+        // As foundBills has been sorted by date, we can select the element following loops
+        const foundLineNumber = foundLineNumbers[i].textContent.replace(
+          / /g,
+          ''
+        )
+        if (!foundLineNumber) {
+          this.log(
+            'warn',
+            'Cannot find any numbers, even scraping. Cannot qualify the document, skipping this doc.'
+          )
+          skippedDocs++
+          continue
+        }
+        computedBill.lineNumber = foundLineNumber
+        computedBill.subPath = `${foundLineNumber}`
+      }
+      if (
+        computedBill.lineNumber.startsWith('06') ||
+        computedBill.lineNumber.startsWith('07')
+      ) {
+        result.phone_invoices.push(computedBill)
+      } else {
+        result.isp_invoices.push(computedBill)
+      }
+      i++
+    }
+    this.log('info', 'computing otherBills')
+    // physical products bills had a different structure, needs to be sorted separately
+    if (otherTypeBills !== undefined && otherTypeBills.length) {
+      this.log('info', 'will sort other by date')
+      otherTypeBills.sort(sortDateFn)
+      for (const otherBill of otherTypeBills) {
+        const fileHref = otherBill.downloadLink[0].href
+        const amount = otherBill.montantTTC
+        const foundDate = otherBill.dateCreation
+        const vendor = 'Bouygues Telecom'
+        const date = new Date(foundDate)
+        const formattedDate = format(date, 'yyyy-MM-dd')
+        const currency = '€'
+        const computedBill = {
+          amount,
+          currency,
+          filename: `${formattedDate}_${vendor}_${amount}${currency}.pdf`,
+          fileurl: `${apiUrl}${fileHref}`,
+          date,
+          vendor: 'Bouygues Telecom',
+          vendorRef: otherBill.idDocument,
+          fileAttributes: {
+            metadata: {
+              contentAuthor: 'bouyguestelecom.fr',
+              datetime: date,
+              datetimeLabel: 'issueDate',
+              isSubscription: true,
+              issueDate: new Date(),
+              carbonCopy: true
+            }
+          }
+        }
+        result.other_invoices.push(computedBill)
+      }
+      result.other_invoices.sort(sortFilenameFn)
+    }
+    result.phone_invoices.sort(sortFilenameFn)
+    result.isp_invoices.sort(sortFilenameFn)
+    result.skippedDocs = skippedDocs
+    return result
+  }
+
+  async checkInterception() {
+    this.log('info', '📍️ checkInterception starts')
+    await waitFor(
+      () => {
+        const isFull = Boolean(Object.keys(billsJSON).length)
+        if (isFull) return true
+        else return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return billsJSON
+  }
+
+  async fetchLinesData(userId) {
+    this.log('info', '📍️ fetchLinesData starts')
+    try {
+      const identityStorageItem = JSON.parse(
+        window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+      )
+      const linesData =
+        identityStorageItem.value?.data?.consulterPersonne?.lignes?.items
+      const lines = []
+      for (const line of linesData) {
+        lines.push({
+          lineStatus: line.statut,
+          lineNumber: line.numeroTel,
+          contractInfo: {
+            id: line.contrat.id,
+            type: line.contrat.typeLigne,
+            status: line.contrat.statut,
+            offerName: line.contrat.abonnement.detailsAbonnement.libelle
+          }
+        })
+      }
+      return lines
+    } catch (error) {
+      this.log('warn', 'Could not found any lines data, cannot fetch bills')
+      throw new Error('UNKNOWN_ERROR')
+    }
+  }
+
+  async downloadFileInWorker(entry) {
+    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
+    // fetch request necessary to finally get the file
+    this.log('debug', 'downloading file in worker')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    const body = await ky
+      .get(entry.fileurl, {
+        headers: {
+          Authorization: `BEARER ${token}`
+        }
+      })
+      .json()
+    const downloadHref = body._actions
+      ? // isp/phone invoices
+        body._actions.telecharger.action
+      : // physical products invoices
+        body._links.lienTelechargement.href
+    const fileurl = `${apiUrl}${downloadHref}`
+
+    const blob = await ky
+      .get(fileurl, {
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      })
+      .blob()
+
+    return await blobToBase64(blob)
   }
 
   async fetchIdentity(userId, userCoordinates) {
@@ -455,7 +813,10 @@ connector
     additionalExposedMethodsNames: [
       'getIframeSrc',
       'waitForUserId',
-      'fetchIdentity'
+      'fetchIdentity',
+      'fetchLinesData',
+      'checkInterception',
+      'checkBillsElementLength'
     ]
   })
   .catch(err => {

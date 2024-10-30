@@ -5677,558 +5677,19 @@ var _default = exports["default"] = RequestInterceptor;
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/*! MIT License © Sindre Sorhus */
-
-const globals = {};
-
-const getGlobal = property => {
-	/* istanbul ignore next */
-	if (typeof self !== 'undefined' && self && property in self) {
-		return self;
-	}
-
-	/* istanbul ignore next */
-	if (typeof window !== 'undefined' && window && property in window) {
-		return window;
-	}
-
-	if (typeof __webpack_require__.g !== 'undefined' && __webpack_require__.g && property in __webpack_require__.g) {
-		return __webpack_require__.g;
-	}
-
-	/* istanbul ignore next */
-	if (typeof globalThis !== 'undefined' && globalThis) {
-		return globalThis;
-	}
-};
-
-const globalProperties = [
-	'Headers',
-	'Request',
-	'Response',
-	'ReadableStream',
-	'fetch',
-	'AbortController',
-	'FormData'
-];
-
-for (const property of globalProperties) {
-	Object.defineProperty(globals, property, {
-		get() {
-			const globalObject = getGlobal(property);
-			const value = globalObject && globalObject[property];
-			return typeof value === 'function' ? value.bind(globalObject) : value;
-		}
-	});
-}
-
-const isObject = value => value !== null && typeof value === 'object';
-const supportsAbortController = typeof globals.AbortController === 'function';
-const supportsStreams = typeof globals.ReadableStream === 'function';
-const supportsFormData = typeof globals.FormData === 'function';
-
-const mergeHeaders = (source1, source2) => {
-	const result = new globals.Headers(source1 || {});
-	const isHeadersInstance = source2 instanceof globals.Headers;
-	const source = new globals.Headers(source2 || {});
-
-	for (const [key, value] of source) {
-		if ((isHeadersInstance && value === 'undefined') || value === undefined) {
-			result.delete(key);
-		} else {
-			result.set(key, value);
-		}
-	}
-
-	return result;
-};
-
-const deepMerge = (...sources) => {
-	let returnValue = {};
-	let headers = {};
-
-	for (const source of sources) {
-		if (Array.isArray(source)) {
-			if (!(Array.isArray(returnValue))) {
-				returnValue = [];
-			}
-
-			returnValue = [...returnValue, ...source];
-		} else if (isObject(source)) {
-			for (let [key, value] of Object.entries(source)) {
-				if (isObject(value) && (key in returnValue)) {
-					value = deepMerge(returnValue[key], value);
-				}
-
-				returnValue = {...returnValue, [key]: value};
-			}
-
-			if (isObject(source.headers)) {
-				headers = mergeHeaders(headers, source.headers);
-			}
-		}
-
-		returnValue.headers = headers;
-	}
-
-	return returnValue;
-};
-
-const requestMethods = [
-	'get',
-	'post',
-	'put',
-	'patch',
-	'head',
-	'delete'
-];
-
-const responseTypes = {
-	json: 'application/json',
-	text: 'text/*',
-	formData: 'multipart/form-data',
-	arrayBuffer: '*/*',
-	blob: '*/*'
-};
-
-const retryMethods = [
-	'get',
-	'put',
-	'head',
-	'delete',
-	'options',
-	'trace'
-];
-
-const retryStatusCodes = [
-	408,
-	413,
-	429,
-	500,
-	502,
-	503,
-	504
-];
-
-const retryAfterStatusCodes = [
-	413,
-	429,
-	503
-];
-
-const stop = Symbol('stop');
-
-class HTTPError extends Error {
-	constructor(response) {
-		// Set the message to the status text, such as Unauthorized,
-		// with some fallbacks. This message should never be undefined.
-		super(
-			response.statusText ||
-			String(
-				(response.status === 0 || response.status) ?
-					response.status : 'Unknown response error'
-			)
-		);
-		this.name = 'HTTPError';
-		this.response = response;
-	}
-}
-
-class TimeoutError extends Error {
-	constructor(request) {
-		super('Request timed out');
-		this.name = 'TimeoutError';
-		this.request = request;
-	}
-}
-
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-// `Promise.race()` workaround (#91)
-const timeout = (request, abortController, options) =>
-	new Promise((resolve, reject) => {
-		const timeoutID = setTimeout(() => {
-			if (abortController) {
-				abortController.abort();
-			}
-
-			reject(new TimeoutError(request));
-		}, options.timeout);
-
-		/* eslint-disable promise/prefer-await-to-then */
-		options.fetch(request)
-			.then(resolve)
-			.catch(reject)
-			.then(() => {
-				clearTimeout(timeoutID);
-			});
-		/* eslint-enable promise/prefer-await-to-then */
-	});
-
-const normalizeRequestMethod = input => requestMethods.includes(input) ? input.toUpperCase() : input;
-
-const defaultRetryOptions = {
-	limit: 2,
-	methods: retryMethods,
-	statusCodes: retryStatusCodes,
-	afterStatusCodes: retryAfterStatusCodes
-};
-
-const normalizeRetryOptions = (retry = {}) => {
-	if (typeof retry === 'number') {
-		return {
-			...defaultRetryOptions,
-			limit: retry
-		};
-	}
-
-	if (retry.methods && !Array.isArray(retry.methods)) {
-		throw new Error('retry.methods must be an array');
-	}
-
-	if (retry.statusCodes && !Array.isArray(retry.statusCodes)) {
-		throw new Error('retry.statusCodes must be an array');
-	}
-
-	return {
-		...defaultRetryOptions,
-		...retry,
-		afterStatusCodes: retryAfterStatusCodes
-	};
-};
-
-// The maximum value of a 32bit int (see issue #117)
-const maxSafeTimeout = 2147483647;
-
-class Ky {
-	constructor(input, options = {}) {
-		this._retryCount = 0;
-		this._input = input;
-		this._options = {
-			// TODO: credentials can be removed when the spec change is implemented in all browsers. Context: https://www.chromestatus.com/feature/4539473312350208
-			credentials: this._input.credentials || 'same-origin',
-			...options,
-			headers: mergeHeaders(this._input.headers, options.headers),
-			hooks: deepMerge({
-				beforeRequest: [],
-				beforeRetry: [],
-				afterResponse: []
-			}, options.hooks),
-			method: normalizeRequestMethod(options.method || this._input.method),
-			prefixUrl: String(options.prefixUrl || ''),
-			retry: normalizeRetryOptions(options.retry),
-			throwHttpErrors: options.throwHttpErrors !== false,
-			timeout: typeof options.timeout === 'undefined' ? 10000 : options.timeout,
-			fetch: options.fetch || globals.fetch
-		};
-
-		if (typeof this._input !== 'string' && !(this._input instanceof URL || this._input instanceof globals.Request)) {
-			throw new TypeError('`input` must be a string, URL, or Request');
-		}
-
-		if (this._options.prefixUrl && typeof this._input === 'string') {
-			if (this._input.startsWith('/')) {
-				throw new Error('`input` must not begin with a slash when using `prefixUrl`');
-			}
-
-			if (!this._options.prefixUrl.endsWith('/')) {
-				this._options.prefixUrl += '/';
-			}
-
-			this._input = this._options.prefixUrl + this._input;
-		}
-
-		if (supportsAbortController) {
-			this.abortController = new globals.AbortController();
-			if (this._options.signal) {
-				this._options.signal.addEventListener('abort', () => {
-					this.abortController.abort();
-				});
-			}
-
-			this._options.signal = this.abortController.signal;
-		}
-
-		this.request = new globals.Request(this._input, this._options);
-
-		if (this._options.searchParams) {
-			const searchParams = '?' + new URLSearchParams(this._options.searchParams).toString();
-			const url = this.request.url.replace(/(?:\?.*?)?(?=#|$)/, searchParams);
-
-			// To provide correct form boundary, Content-Type header should be deleted each time when new Request instantiated from another one
-			if (((supportsFormData && this._options.body instanceof globals.FormData) || this._options.body instanceof URLSearchParams) && !(this._options.headers && this._options.headers['content-type'])) {
-				this.request.headers.delete('content-type');
-			}
-
-			this.request = new globals.Request(new globals.Request(url, this.request), this._options);
-		}
-
-		if (this._options.json !== undefined) {
-			this._options.body = JSON.stringify(this._options.json);
-			this.request.headers.set('content-type', 'application/json');
-			this.request = new globals.Request(this.request, {body: this._options.body});
-		}
-
-		const fn = async () => {
-			if (this._options.timeout > maxSafeTimeout) {
-				throw new RangeError(`The \`timeout\` option cannot be greater than ${maxSafeTimeout}`);
-			}
-
-			await delay(1);
-			let response = await this._fetch();
-
-			for (const hook of this._options.hooks.afterResponse) {
-				// eslint-disable-next-line no-await-in-loop
-				const modifiedResponse = await hook(
-					this.request,
-					this._options,
-					this._decorateResponse(response.clone())
-				);
-
-				if (modifiedResponse instanceof globals.Response) {
-					response = modifiedResponse;
-				}
-			}
-
-			this._decorateResponse(response);
-
-			if (!response.ok && this._options.throwHttpErrors) {
-				throw new HTTPError(response);
-			}
-
-			// If `onDownloadProgress` is passed, it uses the stream API internally
-			/* istanbul ignore next */
-			if (this._options.onDownloadProgress) {
-				if (typeof this._options.onDownloadProgress !== 'function') {
-					throw new TypeError('The `onDownloadProgress` option must be a function');
-				}
-
-				if (!supportsStreams) {
-					throw new Error('Streams are not supported in your environment. `ReadableStream` is missing.');
-				}
-
-				return this._stream(response.clone(), this._options.onDownloadProgress);
-			}
-
-			return response;
-		};
-
-		const isRetriableMethod = this._options.retry.methods.includes(this.request.method.toLowerCase());
-		const result = isRetriableMethod ? this._retry(fn) : fn();
-
-		for (const [type, mimeType] of Object.entries(responseTypes)) {
-			result[type] = async () => {
-				this.request.headers.set('accept', this.request.headers.get('accept') || mimeType);
-
-				const response = (await result).clone();
-
-				if (type === 'json') {
-					if (response.status === 204) {
-						return '';
-					}
-
-					if (options.parseJson) {
-						return options.parseJson(await response.text());
-					}
-				}
-
-				return response[type]();
-			};
-		}
-
-		return result;
-	}
-
-	_calculateRetryDelay(error) {
-		this._retryCount++;
-
-		if (this._retryCount < this._options.retry.limit && !(error instanceof TimeoutError)) {
-			if (error instanceof HTTPError) {
-				if (!this._options.retry.statusCodes.includes(error.response.status)) {
-					return 0;
-				}
-
-				const retryAfter = error.response.headers.get('Retry-After');
-				if (retryAfter && this._options.retry.afterStatusCodes.includes(error.response.status)) {
-					let after = Number(retryAfter);
-					if (Number.isNaN(after)) {
-						after = Date.parse(retryAfter) - Date.now();
-					} else {
-						after *= 1000;
-					}
-
-					if (typeof this._options.retry.maxRetryAfter !== 'undefined' && after > this._options.retry.maxRetryAfter) {
-						return 0;
-					}
-
-					return after;
-				}
-
-				if (error.response.status === 413) {
-					return 0;
-				}
-			}
-
-			const BACKOFF_FACTOR = 0.3;
-			return BACKOFF_FACTOR * (2 ** (this._retryCount - 1)) * 1000;
-		}
-
-		return 0;
-	}
-
-	_decorateResponse(response) {
-		if (this._options.parseJson) {
-			response.json = async () => {
-				return this._options.parseJson(await response.text());
-			};
-		}
-
-		return response;
-	}
-
-	async _retry(fn) {
-		try {
-			return await fn();
-		} catch (error) {
-			const ms = Math.min(this._calculateRetryDelay(error), maxSafeTimeout);
-			if (ms !== 0 && this._retryCount > 0) {
-				await delay(ms);
-
-				for (const hook of this._options.hooks.beforeRetry) {
-					// eslint-disable-next-line no-await-in-loop
-					const hookResult = await hook({
-						request: this.request,
-						options: this._options,
-						error,
-						retryCount: this._retryCount
-					});
-
-					// If `stop` is returned from the hook, the retry process is stopped
-					if (hookResult === stop) {
-						return;
-					}
-				}
-
-				return this._retry(fn);
-			}
-
-			if (this._options.throwHttpErrors) {
-				throw error;
-			}
-		}
-	}
-
-	async _fetch() {
-		for (const hook of this._options.hooks.beforeRequest) {
-			// eslint-disable-next-line no-await-in-loop
-			const result = await hook(this.request, this._options);
-
-			if (result instanceof Request) {
-				this.request = result;
-				break;
-			}
-
-			if (result instanceof Response) {
-				return result;
-			}
-		}
-
-		if (this._options.timeout === false) {
-			return this._options.fetch(this.request.clone());
-		}
-
-		return timeout(this.request.clone(), this.abortController, this._options);
-	}
-
-	/* istanbul ignore next */
-	_stream(response, onDownloadProgress) {
-		const totalBytes = Number(response.headers.get('content-length')) || 0;
-		let transferredBytes = 0;
-
-		return new globals.Response(
-			new globals.ReadableStream({
-				start(controller) {
-					const reader = response.body.getReader();
-
-					if (onDownloadProgress) {
-						onDownloadProgress({percent: 0, transferredBytes: 0, totalBytes}, new Uint8Array());
-					}
-
-					async function read() {
-						const {done, value} = await reader.read();
-						if (done) {
-							controller.close();
-							return;
-						}
-
-						if (onDownloadProgress) {
-							transferredBytes += value.byteLength;
-							const percent = totalBytes === 0 ? 0 : transferredBytes / totalBytes;
-							onDownloadProgress({percent, transferredBytes, totalBytes}, value);
-						}
-
-						controller.enqueue(value);
-						read();
-					}
-
-					read();
-				}
-			})
-		);
-	}
-}
-
-const validateAndMerge = (...sources) => {
-	for (const source of sources) {
-		if ((!isObject(source) || Array.isArray(source)) && typeof source !== 'undefined') {
-			throw new TypeError('The `options` argument must be an object');
-		}
-	}
-
-	return deepMerge({}, ...sources);
-};
-
-const createInstance = defaults => {
-	const ky = (input, options) => new Ky(input, validateAndMerge(defaults, options));
-
-	for (const method of requestMethods) {
-		ky[method] = (input, options) => new Ky(input, validateAndMerge(defaults, options, {method}));
-	}
-
-	ky.HTTPError = HTTPError;
-	ky.TimeoutError = TimeoutError;
-	ky.create = newDefaults => createInstance(validateAndMerge(newDefaults));
-	ky.extend = newDefaults => createInstance(validateAndMerge(defaults, newDefaults));
-	ky.stop = stop;
-
-	return ky;
-};
-
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (createInstance());
-
-
-/***/ }),
-/* 53 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ format)
 /* harmony export */ });
-/* harmony import */ var _isValid_index_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(70);
-/* harmony import */ var _subMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(73);
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(68);
-/* harmony import */ var _lib_format_formatters_index_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(76);
-/* harmony import */ var _lib_format_longFormatters_index_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(75);
-/* harmony import */ var _lib_getTimezoneOffsetInMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(72);
-/* harmony import */ var _lib_protectedTokens_index_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(88);
-/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(67);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _lib_defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(55);
-/* harmony import */ var _lib_defaultLocale_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(56);
+/* harmony import */ var _isValid_index_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(69);
+/* harmony import */ var _subMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(72);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(67);
+/* harmony import */ var _lib_format_formatters_index_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(75);
+/* harmony import */ var _lib_format_longFormatters_index_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(74);
+/* harmony import */ var _lib_getTimezoneOffsetInMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(71);
+/* harmony import */ var _lib_protectedTokens_index_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(87);
+/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(66);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _lib_defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(54);
+/* harmony import */ var _lib_defaultLocale_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(55);
 
 
 
@@ -6633,7 +6094,7 @@ function cleanEscapedString(input) {
 }
 
 /***/ }),
-/* 54 */
+/* 53 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6648,7 +6109,7 @@ function requiredArgs(required, args) {
 }
 
 /***/ }),
-/* 55 */
+/* 54 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6666,6 +6127,19 @@ function setDefaultOptions(newOptions) {
 }
 
 /***/ }),
+/* 55 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var _locale_en_US_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(56);
+
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_locale_en_US_index_js__WEBPACK_IMPORTED_MODULE_0__["default"]);
+
+/***/ }),
 /* 56 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
@@ -6674,24 +6148,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _locale_en_US_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(57);
-
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_locale_en_US_index_js__WEBPACK_IMPORTED_MODULE_0__["default"]);
-
-/***/ }),
-/* 57 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var _lib_formatDistance_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(58);
-/* harmony import */ var _lib_formatLong_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(59);
-/* harmony import */ var _lib_formatRelative_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(61);
-/* harmony import */ var _lib_localize_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(62);
-/* harmony import */ var _lib_match_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(64);
+/* harmony import */ var _lib_formatDistance_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(57);
+/* harmony import */ var _lib_formatLong_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(58);
+/* harmony import */ var _lib_formatRelative_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(60);
+/* harmony import */ var _lib_localize_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(61);
+/* harmony import */ var _lib_match_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(63);
 
 
 
@@ -6721,7 +6182,7 @@ var locale = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (locale);
 
 /***/ }),
-/* 58 */
+/* 57 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6814,7 +6275,7 @@ var formatDistance = function formatDistance(token, count, options) {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (formatDistance);
 
 /***/ }),
-/* 59 */
+/* 58 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6822,7 +6283,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _lib_buildFormatLongFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(60);
+/* harmony import */ var _lib_buildFormatLongFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(59);
 
 var dateFormats = {
   full: 'EEEE, MMMM do, y',
@@ -6859,7 +6320,7 @@ var formatLong = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (formatLong);
 
 /***/ }),
-/* 60 */
+/* 59 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6878,7 +6339,7 @@ function buildFormatLongFn(args) {
 }
 
 /***/ }),
-/* 61 */
+/* 60 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6900,7 +6361,7 @@ var formatRelative = function formatRelative(token, _date, _baseDate, _options) 
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (formatRelative);
 
 /***/ }),
-/* 62 */
+/* 61 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -6908,7 +6369,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _lib_buildLocalizeFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(63);
+/* harmony import */ var _lib_buildLocalizeFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(62);
 
 var eraValues = {
   narrow: ['B', 'A'],
@@ -7054,7 +6515,7 @@ var localize = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (localize);
 
 /***/ }),
-/* 63 */
+/* 62 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7082,7 +6543,7 @@ function buildLocalizeFn(args) {
 }
 
 /***/ }),
-/* 64 */
+/* 63 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7090,8 +6551,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _lib_buildMatchFn_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(66);
-/* harmony import */ var _lib_buildMatchPatternFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(65);
+/* harmony import */ var _lib_buildMatchFn_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(65);
+/* harmony import */ var _lib_buildMatchPatternFn_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(64);
 
 
 var matchOrdinalNumberPattern = /^(\d+)(th|st|nd|rd)?/i;
@@ -7192,7 +6653,7 @@ var match = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (match);
 
 /***/ }),
-/* 65 */
+/* 64 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7219,7 +6680,7 @@ function buildMatchPatternFn(args) {
 }
 
 /***/ }),
-/* 66 */
+/* 65 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7271,7 +6732,7 @@ function findIndex(array, predicate) {
 }
 
 /***/ }),
-/* 67 */
+/* 66 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7291,7 +6752,7 @@ function toInteger(dirtyNumber) {
 }
 
 /***/ }),
-/* 68 */
+/* 67 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7299,8 +6760,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ toDate)
 /* harmony export */ });
-/* harmony import */ var _babel_runtime_helpers_esm_typeof__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(69);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(54);
+/* harmony import */ var _babel_runtime_helpers_esm_typeof__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(68);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(53);
 
 
 /**
@@ -7355,7 +6816,7 @@ function toDate(argument) {
 }
 
 /***/ }),
-/* 69 */
+/* 68 */
 /***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7374,7 +6835,7 @@ function _typeof(obj) {
 }
 
 /***/ }),
-/* 70 */
+/* 69 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7382,9 +6843,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ isValid)
 /* harmony export */ });
-/* harmony import */ var _isDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(71);
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(68);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _isDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(70);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(67);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 
@@ -7429,7 +6890,7 @@ function isValid(dirtyDate) {
 }
 
 /***/ }),
-/* 71 */
+/* 70 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7437,8 +6898,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ isDate)
 /* harmony export */ });
-/* harmony import */ var _babel_runtime_helpers_esm_typeof__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(69);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(54);
+/* harmony import */ var _babel_runtime_helpers_esm_typeof__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(68);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(53);
 
 
 /**
@@ -7479,7 +6940,7 @@ function isDate(value) {
 }
 
 /***/ }),
-/* 72 */
+/* 71 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7505,7 +6966,7 @@ function getTimezoneOffsetInMilliseconds(date) {
 }
 
 /***/ }),
-/* 73 */
+/* 72 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7513,9 +6974,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ subMilliseconds)
 /* harmony export */ });
-/* harmony import */ var _addMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(74);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _addMilliseconds_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(73);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(66);
 
 
 
@@ -7544,7 +7005,7 @@ function subMilliseconds(dirtyDate, dirtyAmount) {
 }
 
 /***/ }),
-/* 74 */
+/* 73 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7552,9 +7013,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ addMilliseconds)
 /* harmony export */ });
-/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(67);
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _lib_toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(66);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _lib_requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 
@@ -7584,7 +7045,7 @@ function addMilliseconds(dirtyDate, dirtyAmount) {
 }
 
 /***/ }),
-/* 75 */
+/* 74 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7674,7 +7135,7 @@ var longFormatters = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (longFormatters);
 
 /***/ }),
-/* 76 */
+/* 75 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -7682,13 +7143,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _lib_getUTCDayOfYear_index_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(87);
-/* harmony import */ var _lib_getUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(85);
-/* harmony import */ var _lib_getUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(81);
-/* harmony import */ var _lib_getUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(83);
-/* harmony import */ var _lib_getUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(79);
-/* harmony import */ var _addLeadingZeros_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(78);
-/* harmony import */ var _lightFormatters_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(77);
+/* harmony import */ var _lib_getUTCDayOfYear_index_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(86);
+/* harmony import */ var _lib_getUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(84);
+/* harmony import */ var _lib_getUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(80);
+/* harmony import */ var _lib_getUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(82);
+/* harmony import */ var _lib_getUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(78);
+/* harmony import */ var _addLeadingZeros_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(77);
+/* harmony import */ var _lightFormatters_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(76);
 
 
 
@@ -8463,7 +7924,7 @@ function formatTimezone(offset, dirtyDelimiter) {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (formatters);
 
 /***/ }),
-/* 77 */
+/* 76 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8471,7 +7932,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _addLeadingZeros_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(78);
+/* harmony import */ var _addLeadingZeros_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(77);
 
 /*
  * |     | Unit                           |     | Unit                           |
@@ -8554,7 +8015,7 @@ var formatters = {
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (formatters);
 
 /***/ }),
-/* 78 */
+/* 77 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8572,7 +8033,7 @@ function addLeadingZeros(number, targetLength) {
 }
 
 /***/ }),
-/* 79 */
+/* 78 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8580,11 +8041,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ getUTCWeekYear)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(80);
-/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(67);
-/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(55);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(79);
+/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(66);
+/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(54);
 
 
 
@@ -8620,7 +8081,7 @@ function getUTCWeekYear(dirtyDate, options) {
 }
 
 /***/ }),
-/* 80 */
+/* 79 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8628,10 +8089,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ startOfUTCWeek)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(68);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(67);
-/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(55);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(67);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(66);
+/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(54);
 
 
 
@@ -8655,7 +8116,7 @@ function startOfUTCWeek(dirtyDate, options) {
 }
 
 /***/ }),
-/* 81 */
+/* 80 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8663,9 +8124,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ getUTCISOWeekYear)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(82);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(81);
 
 
 
@@ -8691,7 +8152,7 @@ function getUTCISOWeekYear(dirtyDate) {
 }
 
 /***/ }),
-/* 82 */
+/* 81 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8699,8 +8160,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ startOfUTCISOWeek)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 function startOfUTCISOWeek(dirtyDate) {
@@ -8715,7 +8176,7 @@ function startOfUTCISOWeek(dirtyDate) {
 }
 
 /***/ }),
-/* 83 */
+/* 82 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8723,10 +8184,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ getUTCWeek)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(80);
-/* harmony import */ var _startOfUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(84);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(79);
+/* harmony import */ var _startOfUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(83);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 
@@ -8744,7 +8205,7 @@ function getUTCWeek(dirtyDate, options) {
 }
 
 /***/ }),
-/* 84 */
+/* 83 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8752,11 +8213,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ startOfUTCWeekYear)
 /* harmony export */ });
-/* harmony import */ var _getUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(79);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
-/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(80);
-/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(67);
-/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(55);
+/* harmony import */ var _getUTCWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(78);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
+/* harmony import */ var _startOfUTCWeek_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(79);
+/* harmony import */ var _toInteger_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(66);
+/* harmony import */ var _defaultOptions_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(54);
 
 
 
@@ -8776,7 +8237,7 @@ function startOfUTCWeekYear(dirtyDate, options) {
 }
 
 /***/ }),
-/* 85 */
+/* 84 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8784,10 +8245,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ getUTCISOWeek)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(82);
-/* harmony import */ var _startOfUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(86);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(81);
+/* harmony import */ var _startOfUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(85);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 
@@ -8805,7 +8266,7 @@ function getUTCISOWeek(dirtyDate) {
 }
 
 /***/ }),
-/* 86 */
+/* 85 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8813,9 +8274,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ startOfUTCISOWeekYear)
 /* harmony export */ });
-/* harmony import */ var _getUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(81);
-/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(82);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _getUTCISOWeekYear_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(80);
+/* harmony import */ var _startOfUTCISOWeek_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(81);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 
@@ -8830,7 +8291,7 @@ function startOfUTCISOWeekYear(dirtyDate) {
 }
 
 /***/ }),
-/* 87 */
+/* 86 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8838,8 +8299,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ getUTCDayOfYear)
 /* harmony export */ });
-/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(68);
-/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(54);
+/* harmony import */ var _toDate_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(67);
+/* harmony import */ var _requiredArgs_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(53);
 
 
 var MILLISECONDS_IN_DAY = 86400000;
@@ -8855,7 +8316,7 @@ function getUTCDayOfYear(dirtyDate) {
 }
 
 /***/ }),
-/* 88 */
+/* 87 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -8884,6 +8345,545 @@ function throwProtectedError(token, format, input) {
     throw new RangeError("Use `dd` instead of `DD` (in `".concat(format, "`) for formatting days of the month to the input `").concat(input, "`; see: https://github.com/date-fns/date-fns/blob/master/docs/unicodeTokens.md"));
   }
 }
+
+/***/ }),
+/* 88 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/*! MIT License © Sindre Sorhus */
+
+const globals = {};
+
+const getGlobal = property => {
+	/* istanbul ignore next */
+	if (typeof self !== 'undefined' && self && property in self) {
+		return self;
+	}
+
+	/* istanbul ignore next */
+	if (typeof window !== 'undefined' && window && property in window) {
+		return window;
+	}
+
+	if (typeof __webpack_require__.g !== 'undefined' && __webpack_require__.g && property in __webpack_require__.g) {
+		return __webpack_require__.g;
+	}
+
+	/* istanbul ignore next */
+	if (typeof globalThis !== 'undefined' && globalThis) {
+		return globalThis;
+	}
+};
+
+const globalProperties = [
+	'Headers',
+	'Request',
+	'Response',
+	'ReadableStream',
+	'fetch',
+	'AbortController',
+	'FormData'
+];
+
+for (const property of globalProperties) {
+	Object.defineProperty(globals, property, {
+		get() {
+			const globalObject = getGlobal(property);
+			const value = globalObject && globalObject[property];
+			return typeof value === 'function' ? value.bind(globalObject) : value;
+		}
+	});
+}
+
+const isObject = value => value !== null && typeof value === 'object';
+const supportsAbortController = typeof globals.AbortController === 'function';
+const supportsStreams = typeof globals.ReadableStream === 'function';
+const supportsFormData = typeof globals.FormData === 'function';
+
+const mergeHeaders = (source1, source2) => {
+	const result = new globals.Headers(source1 || {});
+	const isHeadersInstance = source2 instanceof globals.Headers;
+	const source = new globals.Headers(source2 || {});
+
+	for (const [key, value] of source) {
+		if ((isHeadersInstance && value === 'undefined') || value === undefined) {
+			result.delete(key);
+		} else {
+			result.set(key, value);
+		}
+	}
+
+	return result;
+};
+
+const deepMerge = (...sources) => {
+	let returnValue = {};
+	let headers = {};
+
+	for (const source of sources) {
+		if (Array.isArray(source)) {
+			if (!(Array.isArray(returnValue))) {
+				returnValue = [];
+			}
+
+			returnValue = [...returnValue, ...source];
+		} else if (isObject(source)) {
+			for (let [key, value] of Object.entries(source)) {
+				if (isObject(value) && (key in returnValue)) {
+					value = deepMerge(returnValue[key], value);
+				}
+
+				returnValue = {...returnValue, [key]: value};
+			}
+
+			if (isObject(source.headers)) {
+				headers = mergeHeaders(headers, source.headers);
+			}
+		}
+
+		returnValue.headers = headers;
+	}
+
+	return returnValue;
+};
+
+const requestMethods = [
+	'get',
+	'post',
+	'put',
+	'patch',
+	'head',
+	'delete'
+];
+
+const responseTypes = {
+	json: 'application/json',
+	text: 'text/*',
+	formData: 'multipart/form-data',
+	arrayBuffer: '*/*',
+	blob: '*/*'
+};
+
+const retryMethods = [
+	'get',
+	'put',
+	'head',
+	'delete',
+	'options',
+	'trace'
+];
+
+const retryStatusCodes = [
+	408,
+	413,
+	429,
+	500,
+	502,
+	503,
+	504
+];
+
+const retryAfterStatusCodes = [
+	413,
+	429,
+	503
+];
+
+const stop = Symbol('stop');
+
+class HTTPError extends Error {
+	constructor(response) {
+		// Set the message to the status text, such as Unauthorized,
+		// with some fallbacks. This message should never be undefined.
+		super(
+			response.statusText ||
+			String(
+				(response.status === 0 || response.status) ?
+					response.status : 'Unknown response error'
+			)
+		);
+		this.name = 'HTTPError';
+		this.response = response;
+	}
+}
+
+class TimeoutError extends Error {
+	constructor(request) {
+		super('Request timed out');
+		this.name = 'TimeoutError';
+		this.request = request;
+	}
+}
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// `Promise.race()` workaround (#91)
+const timeout = (request, abortController, options) =>
+	new Promise((resolve, reject) => {
+		const timeoutID = setTimeout(() => {
+			if (abortController) {
+				abortController.abort();
+			}
+
+			reject(new TimeoutError(request));
+		}, options.timeout);
+
+		/* eslint-disable promise/prefer-await-to-then */
+		options.fetch(request)
+			.then(resolve)
+			.catch(reject)
+			.then(() => {
+				clearTimeout(timeoutID);
+			});
+		/* eslint-enable promise/prefer-await-to-then */
+	});
+
+const normalizeRequestMethod = input => requestMethods.includes(input) ? input.toUpperCase() : input;
+
+const defaultRetryOptions = {
+	limit: 2,
+	methods: retryMethods,
+	statusCodes: retryStatusCodes,
+	afterStatusCodes: retryAfterStatusCodes
+};
+
+const normalizeRetryOptions = (retry = {}) => {
+	if (typeof retry === 'number') {
+		return {
+			...defaultRetryOptions,
+			limit: retry
+		};
+	}
+
+	if (retry.methods && !Array.isArray(retry.methods)) {
+		throw new Error('retry.methods must be an array');
+	}
+
+	if (retry.statusCodes && !Array.isArray(retry.statusCodes)) {
+		throw new Error('retry.statusCodes must be an array');
+	}
+
+	return {
+		...defaultRetryOptions,
+		...retry,
+		afterStatusCodes: retryAfterStatusCodes
+	};
+};
+
+// The maximum value of a 32bit int (see issue #117)
+const maxSafeTimeout = 2147483647;
+
+class Ky {
+	constructor(input, options = {}) {
+		this._retryCount = 0;
+		this._input = input;
+		this._options = {
+			// TODO: credentials can be removed when the spec change is implemented in all browsers. Context: https://www.chromestatus.com/feature/4539473312350208
+			credentials: this._input.credentials || 'same-origin',
+			...options,
+			headers: mergeHeaders(this._input.headers, options.headers),
+			hooks: deepMerge({
+				beforeRequest: [],
+				beforeRetry: [],
+				afterResponse: []
+			}, options.hooks),
+			method: normalizeRequestMethod(options.method || this._input.method),
+			prefixUrl: String(options.prefixUrl || ''),
+			retry: normalizeRetryOptions(options.retry),
+			throwHttpErrors: options.throwHttpErrors !== false,
+			timeout: typeof options.timeout === 'undefined' ? 10000 : options.timeout,
+			fetch: options.fetch || globals.fetch
+		};
+
+		if (typeof this._input !== 'string' && !(this._input instanceof URL || this._input instanceof globals.Request)) {
+			throw new TypeError('`input` must be a string, URL, or Request');
+		}
+
+		if (this._options.prefixUrl && typeof this._input === 'string') {
+			if (this._input.startsWith('/')) {
+				throw new Error('`input` must not begin with a slash when using `prefixUrl`');
+			}
+
+			if (!this._options.prefixUrl.endsWith('/')) {
+				this._options.prefixUrl += '/';
+			}
+
+			this._input = this._options.prefixUrl + this._input;
+		}
+
+		if (supportsAbortController) {
+			this.abortController = new globals.AbortController();
+			if (this._options.signal) {
+				this._options.signal.addEventListener('abort', () => {
+					this.abortController.abort();
+				});
+			}
+
+			this._options.signal = this.abortController.signal;
+		}
+
+		this.request = new globals.Request(this._input, this._options);
+
+		if (this._options.searchParams) {
+			const searchParams = '?' + new URLSearchParams(this._options.searchParams).toString();
+			const url = this.request.url.replace(/(?:\?.*?)?(?=#|$)/, searchParams);
+
+			// To provide correct form boundary, Content-Type header should be deleted each time when new Request instantiated from another one
+			if (((supportsFormData && this._options.body instanceof globals.FormData) || this._options.body instanceof URLSearchParams) && !(this._options.headers && this._options.headers['content-type'])) {
+				this.request.headers.delete('content-type');
+			}
+
+			this.request = new globals.Request(new globals.Request(url, this.request), this._options);
+		}
+
+		if (this._options.json !== undefined) {
+			this._options.body = JSON.stringify(this._options.json);
+			this.request.headers.set('content-type', 'application/json');
+			this.request = new globals.Request(this.request, {body: this._options.body});
+		}
+
+		const fn = async () => {
+			if (this._options.timeout > maxSafeTimeout) {
+				throw new RangeError(`The \`timeout\` option cannot be greater than ${maxSafeTimeout}`);
+			}
+
+			await delay(1);
+			let response = await this._fetch();
+
+			for (const hook of this._options.hooks.afterResponse) {
+				// eslint-disable-next-line no-await-in-loop
+				const modifiedResponse = await hook(
+					this.request,
+					this._options,
+					this._decorateResponse(response.clone())
+				);
+
+				if (modifiedResponse instanceof globals.Response) {
+					response = modifiedResponse;
+				}
+			}
+
+			this._decorateResponse(response);
+
+			if (!response.ok && this._options.throwHttpErrors) {
+				throw new HTTPError(response);
+			}
+
+			// If `onDownloadProgress` is passed, it uses the stream API internally
+			/* istanbul ignore next */
+			if (this._options.onDownloadProgress) {
+				if (typeof this._options.onDownloadProgress !== 'function') {
+					throw new TypeError('The `onDownloadProgress` option must be a function');
+				}
+
+				if (!supportsStreams) {
+					throw new Error('Streams are not supported in your environment. `ReadableStream` is missing.');
+				}
+
+				return this._stream(response.clone(), this._options.onDownloadProgress);
+			}
+
+			return response;
+		};
+
+		const isRetriableMethod = this._options.retry.methods.includes(this.request.method.toLowerCase());
+		const result = isRetriableMethod ? this._retry(fn) : fn();
+
+		for (const [type, mimeType] of Object.entries(responseTypes)) {
+			result[type] = async () => {
+				this.request.headers.set('accept', this.request.headers.get('accept') || mimeType);
+
+				const response = (await result).clone();
+
+				if (type === 'json') {
+					if (response.status === 204) {
+						return '';
+					}
+
+					if (options.parseJson) {
+						return options.parseJson(await response.text());
+					}
+				}
+
+				return response[type]();
+			};
+		}
+
+		return result;
+	}
+
+	_calculateRetryDelay(error) {
+		this._retryCount++;
+
+		if (this._retryCount < this._options.retry.limit && !(error instanceof TimeoutError)) {
+			if (error instanceof HTTPError) {
+				if (!this._options.retry.statusCodes.includes(error.response.status)) {
+					return 0;
+				}
+
+				const retryAfter = error.response.headers.get('Retry-After');
+				if (retryAfter && this._options.retry.afterStatusCodes.includes(error.response.status)) {
+					let after = Number(retryAfter);
+					if (Number.isNaN(after)) {
+						after = Date.parse(retryAfter) - Date.now();
+					} else {
+						after *= 1000;
+					}
+
+					if (typeof this._options.retry.maxRetryAfter !== 'undefined' && after > this._options.retry.maxRetryAfter) {
+						return 0;
+					}
+
+					return after;
+				}
+
+				if (error.response.status === 413) {
+					return 0;
+				}
+			}
+
+			const BACKOFF_FACTOR = 0.3;
+			return BACKOFF_FACTOR * (2 ** (this._retryCount - 1)) * 1000;
+		}
+
+		return 0;
+	}
+
+	_decorateResponse(response) {
+		if (this._options.parseJson) {
+			response.json = async () => {
+				return this._options.parseJson(await response.text());
+			};
+		}
+
+		return response;
+	}
+
+	async _retry(fn) {
+		try {
+			return await fn();
+		} catch (error) {
+			const ms = Math.min(this._calculateRetryDelay(error), maxSafeTimeout);
+			if (ms !== 0 && this._retryCount > 0) {
+				await delay(ms);
+
+				for (const hook of this._options.hooks.beforeRetry) {
+					// eslint-disable-next-line no-await-in-loop
+					const hookResult = await hook({
+						request: this.request,
+						options: this._options,
+						error,
+						retryCount: this._retryCount
+					});
+
+					// If `stop` is returned from the hook, the retry process is stopped
+					if (hookResult === stop) {
+						return;
+					}
+				}
+
+				return this._retry(fn);
+			}
+
+			if (this._options.throwHttpErrors) {
+				throw error;
+			}
+		}
+	}
+
+	async _fetch() {
+		for (const hook of this._options.hooks.beforeRequest) {
+			// eslint-disable-next-line no-await-in-loop
+			const result = await hook(this.request, this._options);
+
+			if (result instanceof Request) {
+				this.request = result;
+				break;
+			}
+
+			if (result instanceof Response) {
+				return result;
+			}
+		}
+
+		if (this._options.timeout === false) {
+			return this._options.fetch(this.request.clone());
+		}
+
+		return timeout(this.request.clone(), this.abortController, this._options);
+	}
+
+	/* istanbul ignore next */
+	_stream(response, onDownloadProgress) {
+		const totalBytes = Number(response.headers.get('content-length')) || 0;
+		let transferredBytes = 0;
+
+		return new globals.Response(
+			new globals.ReadableStream({
+				start(controller) {
+					const reader = response.body.getReader();
+
+					if (onDownloadProgress) {
+						onDownloadProgress({percent: 0, transferredBytes: 0, totalBytes}, new Uint8Array());
+					}
+
+					async function read() {
+						const {done, value} = await reader.read();
+						if (done) {
+							controller.close();
+							return;
+						}
+
+						if (onDownloadProgress) {
+							transferredBytes += value.byteLength;
+							const percent = totalBytes === 0 ? 0 : transferredBytes / totalBytes;
+							onDownloadProgress({percent, transferredBytes, totalBytes}, value);
+						}
+
+						controller.enqueue(value);
+						read();
+					}
+
+					read();
+				}
+			})
+		);
+	}
+}
+
+const validateAndMerge = (...sources) => {
+	for (const source of sources) {
+		if ((!isObject(source) || Array.isArray(source)) && typeof source !== 'undefined') {
+			throw new TypeError('The `options` argument must be an object');
+		}
+	}
+
+	return deepMerge({}, ...sources);
+};
+
+const createInstance = defaults => {
+	const ky = (input, options) => new Ky(input, validateAndMerge(defaults, options));
+
+	for (const method of requestMethods) {
+		ky[method] = (input, options) => new Ky(input, validateAndMerge(defaults, options, {method}));
+	}
+
+	ky.HTTPError = HTTPError;
+	ky.TimeoutError = TimeoutError;
+	ky.create = newDefaults => createInstance(validateAndMerge(newDefaults));
+	ky.extend = newDefaults => createInstance(validateAndMerge(defaults, newDefaults));
+	ky.stop = stop;
+
+	return ky;
+};
+
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (createInstance());
+
 
 /***/ })
 /******/ 	]);
@@ -8972,11 +8972,11 @@ var __webpack_exports__ = {};
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var cozy_clisk_dist_contentscript__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
-/* harmony import */ var date_fns__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(53);
+/* harmony import */ var date_fns__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(52);
 /* harmony import */ var p_wait_for__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(32);
 /* harmony import */ var _cozy_minilog__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(18);
 /* harmony import */ var _cozy_minilog__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(_cozy_minilog__WEBPACK_IMPORTED_MODULE_2__);
-/* harmony import */ var ky__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(52);
+/* harmony import */ var ky__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(88);
 /* harmony import */ var cozy_clisk_dist_contentscript_utils__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(33);
 
 
@@ -8995,14 +8995,12 @@ const successUrlPattern =
   'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
-let billsJSON = []
-// Here we need to override the fetch function to intercept the bills data sent by the website
-// when we reach the bills page. Scraping is extremly tricky to achieve as there is no explicit selectors
-// we could use to be resilient to potential changes.
-// Stocker la référence à la fonction d'origine fetch
+let billsJSON
+// For obscure reasons, fetch override in requestInterceptor is not working as intended.
+// I cannot find a way to fix this so until the problem is solved, we will do the override
+// directly into the konnector's code as it works from here.
 const fetchOriginal = window.fetch
 
-// Remplacer la fonction fetch par une nouvelle fonction
 window.fetch = async (...args) => {
   const response = await fetchOriginal(...args)
   if (typeof args[0] === 'string' && args[0].includes('/graphql')) {
@@ -9010,9 +9008,9 @@ window.fetch = async (...args) => {
       .clone()
       .json()
       .then(body => {
-        if (body?.data?.consulterPersonne) {
+        if (body?.data?.consulterPersonne?.factures) {
           // filter out other graphql requests
-          billsJSON.push(body)
+          billsJSON = { ...body.data.consulterPersonne }
         }
         return response
       })
@@ -9025,7 +9023,22 @@ window.fetch = async (...args) => {
   return response
 }
 
-let FORCE_FETCH_ALL = false
+const requestInterceptor = new cozy_clisk_dist_contentscript__WEBPACK_IMPORTED_MODULE_0__.RequestInterceptor([
+  // {
+  //   identifier: 'graphql',
+  //   method: 'POST',
+  //   url: 'https://api.bouyguestelecom.fr/graphql',
+  //   exact: true,
+  //   serialization: 'json'
+  // },
+  {
+    identifier: 'coordinates',
+    method: 'POST',
+    url: '/coordonnees',
+    serialization: 'json'
+  }
+])
+requestInterceptor.init()
 
 class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTED_MODULE_0__.ContentScript {
   async onWorkerEvent({ event, payload }) {
@@ -9037,11 +9050,34 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         this.log('warn', 'Did not manage to intercept credentials')
       }
     }
+    if (event === 'requestResponse') {
+      const { identifier, response } = payload
+      if (identifier === 'graphql') {
+        // All API calls are the same so we need to sort the interceptions on contained data
+        if (response.data?.consulterPersonne?.factures) {
+          this.store.userBills = response.data.consulterPersonne.factures
+          this.log('debug', 'Bills intercepted')
+        }
+      } else {
+        this.store[identifier] = { response }
+      }
+      // if (identifier === 'paiements' || identifier === 'datesNetSocial') {
+      //   this.store.token = payload.requestHeaders.Authorization
+      // }
+    }
   }
 
   async onWorkerReady() {
-    function addClickListener() {
-      document.body.addEventListener('submit', () => {
+    this.log('info', 'onWorkerReady starts')
+    await this.waitForElementNoReload('form[data-roles="inputForm"]')
+    this.addClickListener.bind(this)()
+  }
+
+  addClickListener() {
+    this.log('info', 'adding listener')
+    document
+      .querySelector('form[data-roles="inputForm"] button[type="submit"]')
+      .addEventListener('click', () => {
         const login = document.querySelector(
           `input[name="username"][role="textbox"]`
         )?.value
@@ -9053,14 +9089,17 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           payload: { login, password }
         })
       })
-    }
-    this.log('info', 'adding listener')
-    addClickListener.bind(this)()
+    // Deactivate keyboard "Enter" key to force user to click manually on the submitButton
+    // For some reason worker emits nothing when user hit enter key
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+      }
+    })
   }
 
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
-    this.bridge.addEventListener('workerEvent', this.onWorkerEvent.bind(this))
     await this.navigateToMonComptePage()
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -9070,15 +9109,21 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     if (authenticated) {
       return true
     }
-    const srcFromIframe = await this.evaluateInWorker(
-      function getSrcFromIFrame() {
-        return document.querySelector('#bytelid_a360_login').getAttribute('src')
-      }
-    )
-    await this.goto(srcFromIframe)
-    await this.waitForElementInWorker('#username')
+    await this.waitForElementInWorker('#bytelid_a360_login')
+    const srcIframe = await this.runInWorkerUntilTrue({
+      method: 'getIframeSrc'
+    })
+    if (srcIframe) {
+      await this.goto(srcIframe)
+      await this.waitForElementInWorker('input[name="username"]')
+    }
     await this.showLoginFormAndWaitForAuthentication()
     return true
+  }
+
+  async getIframeSrc() {
+    this.log('info', '📍️ getIframeSrc starts')
+    return document.querySelector('#bytelid_a360_login')?.getAttribute('src')
   }
 
   async ensureNotAuthenticated() {
@@ -9086,7 +9131,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
       try {
-        await this.waitForElementInWorker('p', {
+        await this.waitForElementInWorker('p, a', {
           includesText: 'Me déconnecter'
         })
       } catch (err) {
@@ -9117,7 +9162,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         'found success url pattern, redirecting to base page: ' +
           document.location.href
       )
-      document.location.href = baseUrl
+      document.location.href = monCompteUrl
       return false
     } else {
       this.log('debug', '👅 not success url pattern: ' + document.location.href)
@@ -9127,7 +9172,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       const tokenExpire = JSON.parse(
         window.sessionStorage.getItem('SSO_payload')
       )?.exp
-
+      const userId = window.sessionStorage.getItem('a360-user-id')
+      if (userId) {
+        this.log('debug', 'userId found in sessionStorage, user logged')
+        return true
+      }
       if (!tokenExpire) {
         this.log('debug', 'checkauthenticated no tokenExpire')
         return false
@@ -9147,6 +9196,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     if (radioTile || codeInputs) {
       this.log('info', 'Website is asking for a confirmation code')
       await this.waitForUserCode()
+      await this.runInWorker('click', 'button', { includesText: 'Continuer' })
     }
   }
 
@@ -9185,9 +9235,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         const sessionStorageUserLogin =
           window.sessionStorage.getItem('a360-user-login')
         if (!sessionStorageUserLogin) {
+          this.log('debug', 'No session login found, not connected')
           return true
         } else {
-          const disconnectButtonSelector = '[class*=tri-power]'
+          this.log('debug', 'Session found, disconnecting ...')
+          const disconnectButtonSelector =
+            '[data-entrylink="deconnexion"] > div > a'
           const disconnectButton = document.querySelector(
             disconnectButtonSelector
           )
@@ -9207,12 +9260,10 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async showLoginFormAndWaitForAuthentication() {
     this.log('info', 'showLoginFormAndWaitForAuthentication start')
-    await this.setWorkerState({ visible: true })
-
     // Keeping this around for cozy-pass solution exploration
     // const credentials = await this.getCredentials()
-    // this.runInWorker('autoFill', credentials)
-
+    // await this.runInWorker('autoFill', credentials)
+    await this.setWorkerState({ visible: true })
     await this.runInWorkerUntilTrue({
       method: 'waitForAuthenticated'
     })
@@ -9221,16 +9272,30 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
-    await this.navigateToMonComptePage()
-    // Navigation is still mandatory to get the billingAddress if exists, it's not loaded on the first page
-    this.store.actualContract = { isActive: await this.navigateToInfosPage() }
-    const validSAI = await this.runInWorker('checkSessionStorageForIdentity')
-    if (!validSAI) {
-      throw new Error(
-        'getUserDataFromWebsite: Cannot retrieve a valid sourceAccountIdentifier, check the code'
-      )
+    await this.waitForRequestInterception('coordinates')
+    let validSAI
+    const coordinateEmail = await this.getUserMainEmail(
+      this.store.coordinates.response?.emails
+    )
+    const savedCredentials = await this.getCredentials()
+    // Prefer user Email instead of login if available
+    if (!coordinateEmail) {
+      validSAI = this.store.userCredentials.login || savedCredentials.login
+    } else {
+      validSAI = coordinateEmail
     }
     return { sourceAccountIdentifier: validSAI }
+  }
+
+  async getUserMainEmail(emailsArray) {
+    this.log('info', '📍️ getUserMainEmail starts')
+    for (const email of emailsArray) {
+      if (email.emailPrincipal) {
+        return email.email
+      }
+    }
+    this.log('warn', 'No main email found')
+    return null
   }
 
   async fetch(context) {
@@ -9238,36 +9303,89 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     if (this.store.userCredentials) {
       await this.saveCredentials(this.store.userCredentials)
     }
+    this.store.userId = await this.runInWorker('waitForUserId')
 
-    const { trigger } = context
-    // force fetch all data (the long way) when last trigger execution is older than 30 days
-    // or when the last job was an error
-    const isLastJobError =
-      trigger.current_state?.last_failure > trigger.current_state?.last_success
-    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
-    const distanceInDays = getDateDistanceInDays(
-      trigger.current_state?.last_execution
+    const bills = await this.getBills()
+    this.log(
+      'info',
+      `bills - phone_invoices length : ${bills.phone_invoices?.length}`
     )
-    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
-      this.log('info', `isLastJobError: ${isLastJobError}`)
-      this.log('info', `distanceInDays: ${distanceInDays}`)
-      this.log('info', `hasLastExecution: ${hasLastExecution}`)
-      FORCE_FETCH_ALL = true
+    this.log(
+      'info',
+      `bills - isp_invoices length : ${bills.isp_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `bills - other_invoices length: ${bills.other_invoices?.length}`
+    )
+    if (bills.phone_invoices.length) {
+      this.log('debug', 'Saving phone_invoice bills')
+      await this.saveBills(bills.phone_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'phone_invoice'
+      })
     }
-    this.log('info', `FORCE_FETCH_ALL: ${FORCE_FETCH_ALL}`)
+    if (bills.isp_invoices.length) {
+      this.log('debug', 'Saving isp_invoice bills')
+      await this.saveBills(bills.isp_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'isp_invoice'
+      })
+    }
+    if (bills.other_invoices.length) {
+      this.log('debug', 'Saving other_invoice bills')
+      await this.saveBills(bills.other_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'other_invoice'
+      })
+    }
 
+    this.store.userIdentity = await this.runInWorker(
+      'fetchIdentity',
+      this.store.userId,
+      this.store.coordinates
+    )
+    if (this.store.userIdentity) {
+      await this.saveIdentity({ contact: this.store.userIdentity })
+    }
+    // await this.waitForElementInWorker('[pause]')
+  }
+
+  async getBills() {
+    this.log('info', '📍️ getBills starts')
+    this.store.linesData = await this.runInWorker(
+      'fetchLinesData',
+      this.store.userId
+    )
+    await this.runInWorker(
+      'click',
+      '[data-entrylink="acoFactures"] [role="button"]'
+    )
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
-    await this.navigateToBillsPage()
-    await this.waitForElementInWorker('div[class="box is-loaded"]')
-    await this.runInWorkerUntilTrue({
-      method: 'waitForInterception',
-      args: [1]
+    await this.waitForElementInWorker(moreBillsButtonSelector)
+    if (await this.isElementInWorker(moreBillsButtonSelector)) {
+      await this.loadMoreBills(moreBillsButtonSelector)
+    }
+    const billsData = await this.runInWorkerUntilTrue({
+      method: 'checkInterception'
     })
+    const finalBills = await this.computeBills(billsData)
+    return finalBills
+  }
 
-    let moreBills = true
-    let lap = 0
-    while (moreBills) {
+  async loadMoreBills(selector) {
+    this.log('info', '📍️ loadMoreBills starts')
+    const wantedElement = selector
+    let hasMoreBills = true
+    while (hasMoreBills) {
       const lengthToCheck = await this.evaluateInWorker(
         function getBillsElementsLength() {
           return document.querySelectorAll(
@@ -9275,14 +9393,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           ).length
         }
       )
-      lap++
-      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-      if (moreBills) {
-        await this.runInWorker('click', moreBillsButtonSelector)
+      hasMoreBills = await this.isElementInWorker(wantedElement)
+      if (hasMoreBills) {
+        await this.runInWorker('click', wantedElement)
         await Promise.all([
           this.runInWorkerUntilTrue({
-            method: 'waitForInterception',
-            args: [lap + 1]
+            method: 'checkInterception'
           }),
           this.runInWorkerUntilTrue({
             method: 'checkBillsElementLength',
@@ -9290,474 +9406,41 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           })
         ])
       }
-      // only fetch the first page when not in fetch all mode
-      if (!FORCE_FETCH_ALL) {
-        moreBills = false
-      }
-    }
-    const neededIndex = this.store.arrayLength - 1
-    const pageBills = await this.runInWorker('computeBills', {
-      lap,
-      neededIndex
-    })
-    this.log('info', `pageBills : ${JSON.stringify(Object.keys(pageBills))}`)
-    this.log(
-      'info',
-      `pageBills - phone_invoices length : ${pageBills.phone_invoices?.length}`
-    )
-    this.log(
-      'info',
-      `pageBills - isp_invoices length : ${pageBills.isp_invoices?.length}`
-    )
-    this.log(
-      'info',
-      `pageBills - other_invoices length: ${pageBills.other_invoices?.length}`
-    )
-    if (pageBills.phone_invoices.length) {
-      this.log('debug', 'Saving phone_invoice bills')
-      await this.saveBills(pageBills.phone_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'phone_invoice'
-      })
-    }
-    if (pageBills.isp_invoices.length) {
-      this.log('debug', 'Saving isp_invoice bills')
-      await this.saveBills(pageBills.isp_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'isp_invoice'
-      })
-    }
-    if (pageBills.other_invoices.length) {
-      this.log('debug', 'Saving other_invoice bills')
-      await this.saveBills(pageBills.other_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'other_invoice'
-      })
-    }
-    // saveIdentity in the end to have the first file visible to the user as soon as possible
-    if (FORCE_FETCH_ALL) {
-      if (this.store.possibleIdentity) {
-        await this.runInWorker('fetchIdentity', this.store.identityKeysContent)
-        await this.saveIdentity({ contact: this.store.userIdentity })
-      } else {
-        this.log('warn', 'Identity cannot be fetched')
-      }
-    }
-    if (pageBills.skippedDocs) {
-      this.log('warn', `${pageBills.skippedDocs} documents skipped`)
-      throw new Error('UNKNOWN_ERROR.PARTIAL_SYNC')
     }
   }
 
-  async downloadFileInWorker(entry) {
-    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
-    // fetch request necessary to finally get the file
-    this.log('debug', 'downloading file in worker')
-    const token = window.sessionStorage.getItem('a360-access_token')
-    const body = await ky__WEBPACK_IMPORTED_MODULE_4__["default"].get(entry.fileurl, {
-        headers: {
-          Authorization: `BEARER ${token}`
-        }
-      })
-      .json()
-    const downloadHref = body._actions
-      ? // isp/phone invoices
-        body._actions.telecharger.action
-      : // physical products invoices
-        body._links.lienTelechargement.href
-    const fileurl = `${apiUrl}${downloadHref}`
-
-    const blob = await ky__WEBPACK_IMPORTED_MODULE_4__["default"].get(fileurl, {
-        headers: {
-          Authorization: 'Bearer ' + token
-        }
-      })
-      .blob()
-
-    return await (0,cozy_clisk_dist_contentscript_utils__WEBPACK_IMPORTED_MODULE_3__.blobToBase64)(blob)
-  }
-
-  async autoFill(credentials) {
-    if (credentials.login) {
-      const loginElement = document.querySelector(
-        'input[name="username"][role="textbox"]'
-      )
-      const passwordElement = document.querySelector(
-        'input[type="password"][role="textbox"]'
-      )
-      if (loginElement) {
-        loginElement.addEventListener('input', () => {
-          loginElement.value = credentials.login
-        })
-        passwordElement.addEventListener('input', () => {
-          passwordElement.value = credentials.password
-        })
-      }
-    }
-  }
-
-  async makeLoginFormVisible() {
+  async checkBillsElementLength(lengthToCheck) {
+    this.log('debug', '📍️ checkBillsElementLength starts')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
-        const loginFormButton = document.querySelector('#login')
-        if (loginFormButton) loginFormButton.click()
-
-        if (document.querySelector('#bytelid_partial_acoMenu_login')) {
+        this.log('info', `lengthToCheck : ${lengthToCheck}`)
+        const billElementLength = document.querySelectorAll(
+          '.has-background-white > .container > .container > .box.is-loaded'
+        ).length
+        this.log('info', `billElementLength : ${billElementLength}`)
+        if (billElementLength > lengthToCheck) {
+          this.log('info', 'more bills have been loaded')
           return true
-        } else {
-          this.log(
-            'info',
-            'Cannot find loginfForm, closing pop over and returning false'
-          )
-          const closeButton = document.querySelector(
-            'button[data-real-class="modal-close is-large"]'
-          )
-          if (closeButton) {
-            closeButton.click()
-          }
-          return false
         }
-      },
-      {
-        interval: 1000,
-        timeout: {
-          milliseconds: 15000,
-          message: new p_wait_for__WEBPACK_IMPORTED_MODULE_1__.TimeoutError(
-            'makeLoginFormVisible timed out after 15000ms'
-          )
-        }
-      }
-    )
-    return true
-  }
-
-  async navigateToInfosPage() {
-    this.log('info', 'navigateToInfosPage starts')
-    await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
-    await this.clickAndWait(
-      'div[href="/mon-compte/infosperso"] a',
-      '.personalInfosAccountDetails'
-    )
-    const isActive = await this.runInWorker('checkIfContractIsActive')
-    if (isActive) {
-      // multiple ajax request update the content. Wait for every content to be present
-      await Promise.all([
-        this.waitForElementInWorker(
-          '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-        ),
-        this.waitForElementInWorker(
-          '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
-        )
-      ])
-    } else {
-      // if contract is not an active one, it might not contains any address to scrape
-      this.waitForElementInWorker(
-        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-      )
-    }
-    return isActive
-  }
-
-  async navigateToBillsPage() {
-    this.log('info', 'navigateToBillsPage starts')
-    await this.goto(billsPageUrl)
-    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
-  }
-
-  async navigateToMonComptePage() {
-    await this.goto(monCompteUrl)
-    await Promise.race([
-      this.waitForElementInWorker('#bytelid_a360_login, .is-loaded'),
-      this.checkUnavailable()
-    ])
-  }
-
-  async checkUnavailable() {
-    this.waitForElementInWorker('body', {
-      includesText: 'Cette page est temporairement indisponible'
-    })
-    throw new Error('VENDOR_DOWN')
-  }
-
-  async checkIfContractIsActive() {
-    this.log('info', '📍️ checkIfContractIsActive starts')
-    const fullSessionStorage = window.sessionStorage
-    let wantedKey
-    for (let i = 0; fullSessionStorage.length; i++) {
-      const key = fullSessionStorage.key(i)
-      if (key.match(/^bytel-api\/\[[0-9]*\]\/contrats\/[0-9]*$/)) {
-        wantedKey = key
-        break
-      }
-    }
-    const keyContent = JSON.parse(window.sessionStorage.getItem(wantedKey))
-    if (keyContent.data.data.statut !== 'ACTIF') {
-      this.log('info', 'Actual contract is not active')
-      return false
-    } else {
-      this.log('info', 'Actual contract is active')
-      return true
-    }
-  }
-
-  async checkSessionStorageForIdentity() {
-    this.log('info', '📍️ checkSessionStorageForIdentity starts')
-    let wantedKeys = {}
-    let counter = 0
-
-    // Test sessionStorage every seconds for five seconds
-    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
-      () => {
-        let fullSessionStorage = window.sessionStorage
-        this.log(
-          'debug',
-          `🍇️ sessionStorage length : ${fullSessionStorage.length}`
-        )
-        const keyRegex =
-          /bytel-api\/\[\d+\]\/personnes\/\d+(?:\/(adresses-facturation|coordonnees))?$|^bytel-api\/\[\d+\]\/personnes\/\d+$/
-        Object.keys(fullSessionStorage).find(key => {
-          const match = key.match(keyRegex)
-          if (match) {
-            if (match[0].includes('coordonnees')) {
-              this.log('debug', '🏮️ Found mail address')
-              if (!wantedKeys.mails) {
-                counter = counter + 1
-                wantedKeys.mails = key
-              }
-            } else if (match[0].includes('facturation')) {
-              this.log('debug', '🏮️ Found postal addresses')
-              if (!wantedKeys.billingAddresses) {
-                counter = counter + 1
-                wantedKeys.billingAddresses = key
-              }
-            } else {
-              this.log('debug', '🏮️ Found names')
-              if (!wantedKeys.names) {
-                counter = counter + 1
-                wantedKeys.names = key
-              }
-            }
-          }
-        })
-        return counter >= 3
-      },
-      {
-        interval: 1000,
-        timeout: {
-          milliseconds: 5000,
-          fallback: async () => {
-            this.log('warn', "⌛️ CheckSessionStorageForIdentity - Time's up")
-          }
-        }
-      }
-    )
-    if (counter >= 1) {
-      this.log('info', `Found ${counter}/3 matching keys for identity `)
-      const validSAI = await this.foundValidSourceAccountIdentifier(wantedKeys)
-      return validSAI
-    } else {
-      this.log('warn', 'Found none of the awaited keys for identity')
-      return false
-    }
-  }
-
-  async foundValidSourceAccountIdentifier(neededKeys) {
-    this.log('info', '📍️ foundValidSourceAccountIdentifier starts')
-    let validSAI = null
-    let mailSessionKey = null
-    let loginSessionKey = null
-    let billingAddSessionKey = null
-    const identityKeysContent = {}
-    if (neededKeys.mails) {
-      mailSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.mails)
-      )
-      identityKeysContent.contactInfos = mailSessionKey
-    }
-    if (neededKeys.names) {
-      loginSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.names)
-      )
-      identityKeysContent.personnalInfos = loginSessionKey
-    }
-    if (neededKeys.billingAddresses) {
-      billingAddSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.billingAddresses)
-      )
-      identityKeysContent.postalAddressesInfos = billingAddSessionKey
-    }
-    const foundEmails = mailSessionKey.data.data.emails
-    if ((foundEmails ?? false) && foundEmails.length) {
-      for (const email of foundEmails) {
-        if (email.emailPrincipal) {
-          this.log('info', 'Found principal email in listed mails')
-          validSAI = email.email
-          this.log(
-            'info',
-            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
-          )
-        } else {
-          this.log('info', 'Not principal email')
-        }
-      }
-    } else {
-      this.log('info', 'No email found in "/coordonees" sessionKey')
-    }
-    const possibleLogins = loginSessionKey.data.data.comptesAcces
-    if ((possibleLogins ?? false) && possibleLogins.length && !validSAI) {
-      let i = 1
-      for (const possibleLogin of possibleLogins) {
-        if (possibleLogin.includes('@')) {
-          this.log('info', `possibleLogin entry n°${i} match email condition`)
-          validSAI = possibleLogin
-          this.log(
-            'info',
-            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
-          )
-          break
-        }
-        i++
-      }
-    } else {
-      validSAI
-        ? this.log(
-            'info',
-            '"personnes/[id]" sessionKey not checked, already found a validSAI'
-          )
-        : this.log(
-            'info',
-            'No possibleLogins found in "personnes/[id]" sessionKey'
-          )
-    }
-    if (!validSAI) {
-      this.log(
-        'info',
-        'No email found in available sessionKeys, last chance finding a validSAI with pure scraping'
-      )
-      validSAI = await this.scrapValidSAI()
-      this.log('info', `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`)
-      if (!validSAI) {
-        this.log(
-          'warn',
-          'No emails found anywhere, fallbacking on firstName + lastName'
-        )
-        const { nom, prenom } = loginSessionKey.data.data
-        validSAI = `${nom} ${prenom}`
-      }
-    }
-    await this.sendToPilot({ identityKeysContent, possibleIdentity: true })
-    return validSAI
-  }
-
-  async fetchIdentity(identityInfos) {
-    this.log('info', 'fetchIdentity starts')
-    const { contactInfos, personnalInfos, postalAddressesInfos } = identityInfos
-    const contactData = contactInfos?.data?.data
-    const personnalData = personnalInfos?.data?.data
-    const postalData = postalAddressesInfos?.data?.data
-    let userIdentity = {}
-    if (personnalData) {
-      this.log('info', '🦜️Fetching personnalData')
-      const { nom: familyName, prenom: givenName } = personnalData
-      userIdentity.name = { givenName, familyName }
-    } else {
-      this.log('warn', '🏮️ No personnalData at all')
-    }
-    if (contactData) {
-      this.log('info', '🦜️Fetching contactData')
-      if (contactData.emails.length) {
-        this.log('info', '🦜️Found emails')
-        userIdentity.email = []
-        for (const email of contactData.emails) {
-          if (email.emailPrincipal) {
-            userIdentity.email.push({ address: email.email })
-          }
-        }
-      } else {
-        this.log('info', '🏮️ No contactData - emails found')
-      }
-      if (contactData.telephones.length) {
-        this.log('info', '🦜️Found phones')
-        userIdentity.phone = []
-        for (const phone of contactData.telephones) {
-          if (phone.numero) {
-            userIdentity.phone.push({
-              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
-              number: phone.numero
-            })
-          }
-        }
-      } else {
-        this.log('info', '🏮️ No contactData - phones found')
-      }
-    } else {
-      this.log('warn', '🏮️ No contactData at all')
-    }
-    if (postalData) {
-      this.log('info', '🦜️Fetching postalData')
-      if (postalData.items.length) {
-        this.log('info', '🦜️Found addresses')
-        userIdentity.address = []
-        for (const item of postalData.items) {
-          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
-          userIdentity.address.push({
-            number: item.numero,
-            street: item.rue,
-            postCode: item.codePostal,
-            city: item.ville,
-            country: item.pays,
-            formattedAddress
-          })
-        }
-      } else {
-        this.log('info', '🏮️ No postalData items found')
-      }
-    } else {
-      this.log('warn', '🏮️ No postalData at all')
-    }
-    await this.sendToPilot({ userIdentity })
-  }
-
-  async checkInterception(number) {
-    this.log('debug', 'checkInterception starts')
-    this.log('debug', `number in checkInterception : ${number}`)
-    if (billsJSON.length === number) {
-      await this.sendToPilot({ arrayLength: billsJSON.length })
-      return true
-    }
-    return false
-  }
-
-  async waitForInterception(number) {
-    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
-      () => {
-        return this.checkInterception(number)
+        return false
       },
       {
         interval: 1000,
         timeout: 30 * 1000
       }
     )
+
     return true
   }
 
-  async computeBills(infos) {
-    this.log('debug', 'computeBills starts')
+  async computeBills(data) {
+    this.log('info', '📍️ computeBills starts')
+
     const result = { phone_invoices: [], isp_invoices: [], other_invoices: [] }
     let skippedDocs = 0
-    let comptesFacturation =
-      billsJSON[infos.neededIndex].data.consulterPersonne.factures
-        .comptesFacturation
+    let comptesFacturation = data.factures.comptesFacturation
     // Physical products invoices are separated from the mobile/isp invoices
-    let otherTypeBills =
-      billsJSON[infos.neededIndex].data.consulterPersonne.rechercherDocuments
-        .documents
+    let otherTypeBills = data.rechercherDocuments.documents
     let foundBills = []
     function sortFilenameFn(a, b) {
       a.filename > b.filename ? 1 : -1
@@ -9791,7 +9474,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       const foundDate = foundBill.dateFacturation
       const vendor = 'Bouygues Telecom'
       const date = new Date(foundDate)
-      const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_5__["default"])(date, 'yyyy-MM-dd')
+      const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_4__["default"])(date, 'yyyy-MM-dd')
       const currency = '€'
       const lineNumber = foundBill.lignes[0]
         ? foundBill.lignes[0].numeroLigne
@@ -9860,7 +9543,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         const foundDate = otherBill.dateCreation
         const vendor = 'Bouygues Telecom'
         const date = new Date(foundDate)
-        const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_5__["default"])(date, 'yyyy-MM-dd')
+        const formattedDate = (0,date_fns__WEBPACK_IMPORTED_MODULE_4__["default"])(date, 'yyyy-MM-dd')
         const currency = '€'
         const computedBill = {
           amount,
@@ -9891,80 +9574,233 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     return result
   }
 
-  async checkBillsElementLength(lengthToCheck) {
-    this.log('debug', '📍️ checkBillsElementLength starts')
+  async checkInterception() {
+    this.log('info', '📍️ checkInterception starts')
     await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
       () => {
-        this.log('info', `lengthToCheck : ${lengthToCheck}`)
-        const billElementLength = document.querySelectorAll(
-          '.has-background-white > .container > .container > .box.is-loaded'
-        ).length
-        this.log('info', `billElementLength : ${billElementLength}`)
-        if (billElementLength > lengthToCheck) {
-          this.log('info', 'greater')
-          return true
-        }
-        return false
+        const isFull = Boolean(Object.keys(billsJSON).length)
+        if (isFull) return true
+        else return false
       },
       {
         interval: 1000,
         timeout: 30 * 1000
       }
     )
-
-    return true
+    return billsJSON
   }
 
-  async scrapValidSAI() {
-    this.log('info', '📍️ scrapValidSAI starts')
-    const personalAccountDetailsElement = document.querySelector(
-      '.personalInfosAccountDetails'
-    )
-    const infosBlocs = personalAccountDetailsElement.querySelectorAll(
-      '.flexContent:not(.flexCenter)'
-    )
-    let emailBloc
-    for (const infosBloc of infosBlocs) {
-      if (infosBloc.innerHTML.includes('Email de connexion')) {
-        emailBloc = infosBloc
-        break
+  async fetchLinesData(userId) {
+    this.log('info', '📍️ fetchLinesData starts')
+    try {
+      const identityStorageItem = JSON.parse(
+        window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+      )
+      const linesData =
+        identityStorageItem.value?.data?.consulterPersonne?.lignes?.items
+      const lines = []
+      for (const line of linesData) {
+        lines.push({
+          lineStatus: line.statut,
+          lineNumber: line.numeroTel,
+          contractInfo: {
+            id: line.contrat.id,
+            type: line.contrat.typeLigne,
+            status: line.contrat.statut,
+            offerName: line.contrat.abonnement.detailsAbonnement.libelle
+          }
+        })
       }
+      return lines
+    } catch (error) {
+      this.log('warn', 'Could not found any lines data, cannot fetch bills')
+      throw new Error('UNKNOWN_ERROR')
     }
-    const wantedSpan = emailBloc.querySelectorAll('span:not([class])')
-    // first element is the title of the bloc, second one the wanted email value
-    const foundEmail = wantedSpan[1]?.textContent.includes('@')
-      ? wantedSpan[1].textContent
-      : null
-    return foundEmail
+  }
+
+  async downloadFileInWorker(entry) {
+    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
+    // fetch request necessary to finally get the file
+    this.log('debug', 'downloading file in worker')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    const body = await ky__WEBPACK_IMPORTED_MODULE_5__["default"].get(entry.fileurl, {
+        headers: {
+          Authorization: `BEARER ${token}`
+        }
+      })
+      .json()
+    const downloadHref = body._actions
+      ? // isp/phone invoices
+        body._actions.telecharger.action
+      : // physical products invoices
+        body._links.lienTelechargement.href
+    const fileurl = `${apiUrl}${downloadHref}`
+
+    const blob = await ky__WEBPACK_IMPORTED_MODULE_5__["default"].get(fileurl, {
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      })
+      .blob()
+
+    return await (0,cozy_clisk_dist_contentscript_utils__WEBPACK_IMPORTED_MODULE_3__.blobToBase64)(blob)
+  }
+
+  async fetchIdentity(userId, userCoordinates) {
+    this.log('info', 'fetchIdentity starts')
+    const identityStorageItem = JSON.parse(
+      window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+    )
+    const mailsData = userCoordinates.response?.emails
+    const phonesData = userCoordinates.response?.telephones
+    const personnalData = identityStorageItem.value?.data?.consulterPersonne
+    const postalData = userCoordinates.response?.adressesPostales
+    let userIdentity = {}
+    if (personnalData) {
+      this.log('info', '🦜️Fetching personnalData')
+      const { nom: familyName, prenom: givenName } = personnalData
+      userIdentity.name = { givenName, familyName }
+    } else {
+      this.log('warn', '🏮️ No personnalData at all')
+    }
+    if (mailsData) {
+      this.log('info', '🦜️Fetching mailsData')
+      if (mailsData.length) {
+        this.log('info', '🦜️Found emails')
+        userIdentity.email = []
+        for (const email of mailsData) {
+          if (email.emailPrincipal) {
+            userIdentity.email.push({ address: email.email })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - emails found')
+      }
+      if (phonesData.length) {
+        this.log('info', '🦜️Found phones')
+        userIdentity.phone = []
+        for (const phone of phonesData) {
+          if (phone.numero) {
+            userIdentity.phone.push({
+              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
+              number: phone.numero
+            })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - phones found')
+      }
+    } else {
+      this.log('warn', '🏮️ No contactData at all')
+    }
+    if (postalData) {
+      this.log('info', '🦜️Fetching postalData')
+      if (postalData.length) {
+        this.log('info', '🦜️Found addresses')
+        userIdentity.address = []
+        for (const item of postalData) {
+          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
+          userIdentity.address.push({
+            number: item.numero,
+            street: item.rue,
+            postCode: item.codePostal,
+            city: item.ville,
+            country: item.pays,
+            formattedAddress
+          })
+        }
+      } else {
+        this.log('info', '🏮️ No postalData items found')
+      }
+    } else {
+      this.log('warn', '🏮️ No postalData at all')
+    }
+    return userIdentity
+  }
+
+  async navigateToInfosPage() {
+    this.log('info', 'navigateToInfosPage starts')
+    // await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
+    // await this.clickAndWait(
+    //   'div[href="/mon-compte/infosperso"] a',
+    //   '.personalInfosAccountDetails'
+    // )
+    await this.waitForElementInWorker('a[data-roles="menuHeader"]', {
+      includesText: 'Mes informations perso'
+    })
+    await this.runInWorker('click', 'a[data-roles="menuHeader"]', {
+      includesText: 'Mes informations perso'
+    })
+    await this.waitForElementInWorker('.personalInfosAccountDetails')
+    const isActive = await this.runInWorker('checkIfContractIsActive')
+    if (isActive) {
+      // multiple ajax request update the content. Wait for every content to be present
+      await Promise.all([
+        this.waitForElementInWorker(
+          '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+        ),
+        this.waitForElementInWorker(
+          '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+        )
+      ])
+    } else {
+      // if contract is not an active one, it might not contains any address to scrape
+      this.waitForElementInWorker(
+        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+      )
+    }
+    return isActive
+  }
+
+  async navigateToBillsPage() {
+    this.log('info', 'navigateToBillsPage starts')
+    await this.goto(billsPageUrl)
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
+  }
+
+  async navigateToMonComptePage() {
+    await this.goto(monCompteUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#bytelid_a360_login'),
+      this.runInWorkerUntilTrue({ method: 'waitForUserId' })
+    ])
+  }
+
+  async waitForUserId() {
+    this.log('info', '📍️ waitForUserId starts')
+    let userId
+    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
+      () => {
+        const sessionStorageId = window.sessionStorage.getItem('a360-user-id')
+        if (!sessionStorageId) return false
+        userId = sessionStorageId
+        return true
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return userId
   }
 }
 
-const connector = new BouyguesTelecomContentScript()
+const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
     additionalExposedMethodsNames: [
+      'getIframeSrc',
+      'waitForUserId',
       'fetchIdentity',
-      'waitForInterception',
-      'computeBills',
-      'makeLoginFormVisible',
+      'fetchLinesData',
+      'checkInterception',
       'checkBillsElementLength',
-      'disconnectAndCheckSessionStorage',
-      'checkSessionStorageForIdentity',
-      'foundValidSourceAccountIdentifier',
-      'checkIfContractIsActive',
-      'autoFill'
+      'disconnectAndCheckSessionStorage'
     ]
   })
   .catch(err => {
     log.warn(err)
   })
-
-function getDateDistanceInDays(dateString) {
-  const distanceMs = Date.now() - new Date(dateString).getTime()
-  const days = 1000 * 60 * 60 * 24
-
-  return Math.floor(distanceMs / days)
-}
 
 })();
 

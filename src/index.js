@@ -1,4 +1,7 @@
-import { ContentScript } from 'cozy-clisk/dist/contentscript'
+import {
+  ContentScript,
+  RequestInterceptor
+} from 'cozy-clisk/dist/contentscript'
 import { format } from 'date-fns'
 import waitFor, { TimeoutError } from 'p-wait-for'
 import Minilog from '@cozy/minilog'
@@ -15,14 +18,12 @@ const successUrlPattern =
   'https://www.bouyguestelecom.fr/mon-compte/all/callback.html?code='
 const apiUrl = 'https://api.bouyguestelecom.fr'
 
-let billsJSON = []
-// Here we need to override the fetch function to intercept the bills data sent by the website
-// when we reach the bills page. Scraping is extremly tricky to achieve as there is no explicit selectors
-// we could use to be resilient to potential changes.
-// Stocker la référence à la fonction d'origine fetch
+let billsJSON
+// For obscure reasons, fetch override in requestInterceptor is not working as intended.
+// I cannot find a way to fix this so until the problem is solved, we will do the override
+// directly into the konnector's code as it works from here.
 const fetchOriginal = window.fetch
 
-// Remplacer la fonction fetch par une nouvelle fonction
 window.fetch = async (...args) => {
   const response = await fetchOriginal(...args)
   if (typeof args[0] === 'string' && args[0].includes('/graphql')) {
@@ -30,9 +31,9 @@ window.fetch = async (...args) => {
       .clone()
       .json()
       .then(body => {
-        if (body?.data?.consulterPersonne) {
+        if (body?.data?.consulterPersonne?.factures) {
           // filter out other graphql requests
-          billsJSON.push(body)
+          billsJSON = { ...body.data.consulterPersonne }
         }
         return response
       })
@@ -45,7 +46,22 @@ window.fetch = async (...args) => {
   return response
 }
 
-let FORCE_FETCH_ALL = false
+const requestInterceptor = new RequestInterceptor([
+  // {
+  //   identifier: 'graphql',
+  //   method: 'POST',
+  //   url: 'https://api.bouyguestelecom.fr/graphql',
+  //   exact: true,
+  //   serialization: 'json'
+  // },
+  {
+    identifier: 'coordinates',
+    method: 'POST',
+    url: '/coordonnees',
+    serialization: 'json'
+  }
+])
+requestInterceptor.init()
 
 class BouyguesTelecomContentScript extends ContentScript {
   async onWorkerEvent({ event, payload }) {
@@ -57,11 +73,34 @@ class BouyguesTelecomContentScript extends ContentScript {
         this.log('warn', 'Did not manage to intercept credentials')
       }
     }
+    if (event === 'requestResponse') {
+      const { identifier, response } = payload
+      if (identifier === 'graphql') {
+        // All API calls are the same so we need to sort the interceptions on contained data
+        if (response.data?.consulterPersonne?.factures) {
+          this.store.userBills = response.data.consulterPersonne.factures
+          this.log('debug', 'Bills intercepted')
+        }
+      } else {
+        this.store[identifier] = { response }
+      }
+      // if (identifier === 'paiements' || identifier === 'datesNetSocial') {
+      //   this.store.token = payload.requestHeaders.Authorization
+      // }
+    }
   }
 
   async onWorkerReady() {
-    function addClickListener() {
-      document.body.addEventListener('submit', () => {
+    this.log('info', 'onWorkerReady starts')
+    await this.waitForElementNoReload('form[data-roles="inputForm"]')
+    this.addClickListener.bind(this)()
+  }
+
+  addClickListener() {
+    this.log('info', 'adding listener')
+    document
+      .querySelector('form[data-roles="inputForm"] button[type="submit"]')
+      .addEventListener('click', () => {
         const login = document.querySelector(
           `input[name="username"][role="textbox"]`
         )?.value
@@ -73,14 +112,17 @@ class BouyguesTelecomContentScript extends ContentScript {
           payload: { login, password }
         })
       })
-    }
-    this.log('info', 'adding listener')
-    addClickListener.bind(this)()
+    // Deactivate keyboard "Enter" key to force user to click manually on the submitButton
+    // For some reason worker emits nothing when user hit enter key
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+      }
+    })
   }
 
   async ensureAuthenticated({ account }) {
     this.log('info', '🤖 EnsureAuthenticated starts')
-    this.bridge.addEventListener('workerEvent', this.onWorkerEvent.bind(this))
     await this.navigateToMonComptePage()
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -90,15 +132,21 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (authenticated) {
       return true
     }
-    const srcFromIframe = await this.evaluateInWorker(
-      function getSrcFromIFrame() {
-        return document.querySelector('#bytelid_a360_login').getAttribute('src')
-      }
-    )
-    await this.goto(srcFromIframe)
-    await this.waitForElementInWorker('#username')
+    await this.waitForElementInWorker('#bytelid_a360_login')
+    const srcIframe = await this.runInWorkerUntilTrue({
+      method: 'getIframeSrc'
+    })
+    if (srcIframe) {
+      await this.goto(srcIframe)
+      await this.waitForElementInWorker('input[name="username"]')
+    }
     await this.showLoginFormAndWaitForAuthentication()
     return true
+  }
+
+  async getIframeSrc() {
+    this.log('info', '📍️ getIframeSrc starts')
+    return document.querySelector('#bytelid_a360_login')?.getAttribute('src')
   }
 
   async ensureNotAuthenticated() {
@@ -106,7 +154,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     const authenticated = await this.runInWorker('checkAuthenticated')
     if (authenticated) {
       try {
-        await this.waitForElementInWorker('p', {
+        await this.waitForElementInWorker('p, a', {
           includesText: 'Me déconnecter'
         })
       } catch (err) {
@@ -137,7 +185,7 @@ class BouyguesTelecomContentScript extends ContentScript {
         'found success url pattern, redirecting to base page: ' +
           document.location.href
       )
-      document.location.href = baseUrl
+      document.location.href = monCompteUrl
       return false
     } else {
       this.log('debug', '👅 not success url pattern: ' + document.location.href)
@@ -147,7 +195,11 @@ class BouyguesTelecomContentScript extends ContentScript {
       const tokenExpire = JSON.parse(
         window.sessionStorage.getItem('SSO_payload')
       )?.exp
-
+      const userId = window.sessionStorage.getItem('a360-user-id')
+      if (userId) {
+        this.log('debug', 'userId found in sessionStorage, user logged')
+        return true
+      }
       if (!tokenExpire) {
         this.log('debug', 'checkauthenticated no tokenExpire')
         return false
@@ -167,6 +219,7 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (radioTile || codeInputs) {
       this.log('info', 'Website is asking for a confirmation code')
       await this.waitForUserCode()
+      await this.runInWorker('click', 'button', { includesText: 'Continuer' })
     }
   }
 
@@ -205,9 +258,12 @@ class BouyguesTelecomContentScript extends ContentScript {
         const sessionStorageUserLogin =
           window.sessionStorage.getItem('a360-user-login')
         if (!sessionStorageUserLogin) {
+          this.log('debug', 'No session login found, not connected')
           return true
         } else {
-          const disconnectButtonSelector = '[class*=tri-power]'
+          this.log('debug', 'Session found, disconnecting ...')
+          const disconnectButtonSelector =
+            '[data-entrylink="deconnexion"] > div > a'
           const disconnectButton = document.querySelector(
             disconnectButtonSelector
           )
@@ -227,12 +283,10 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async showLoginFormAndWaitForAuthentication() {
     this.log('info', 'showLoginFormAndWaitForAuthentication start')
-    await this.setWorkerState({ visible: true })
-
     // Keeping this around for cozy-pass solution exploration
     // const credentials = await this.getCredentials()
-    // this.runInWorker('autoFill', credentials)
-
+    // await this.runInWorker('autoFill', credentials)
+    await this.setWorkerState({ visible: true })
     await this.runInWorkerUntilTrue({
       method: 'waitForAuthenticated'
     })
@@ -241,16 +295,30 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
-    await this.navigateToMonComptePage()
-    // Navigation is still mandatory to get the billingAddress if exists, it's not loaded on the first page
-    this.store.actualContract = { isActive: await this.navigateToInfosPage() }
-    const validSAI = await this.runInWorker('checkSessionStorageForIdentity')
-    if (!validSAI) {
-      throw new Error(
-        'getUserDataFromWebsite: Cannot retrieve a valid sourceAccountIdentifier, check the code'
-      )
+    await this.waitForRequestInterception('coordinates')
+    let validSAI
+    const coordinateEmail = await this.getUserMainEmail(
+      this.store.coordinates.response?.emails
+    )
+    const savedCredentials = await this.getCredentials()
+    // Prefer user Email instead of login if available
+    if (!coordinateEmail) {
+      validSAI = this.store.userCredentials.login || savedCredentials.login
+    } else {
+      validSAI = coordinateEmail
     }
     return { sourceAccountIdentifier: validSAI }
+  }
+
+  async getUserMainEmail(emailsArray) {
+    this.log('info', '📍️ getUserMainEmail starts')
+    for (const email of emailsArray) {
+      if (email.emailPrincipal) {
+        return email.email
+      }
+    }
+    this.log('warn', 'No main email found')
+    return null
   }
 
   async fetch(context) {
@@ -258,36 +326,89 @@ class BouyguesTelecomContentScript extends ContentScript {
     if (this.store.userCredentials) {
       await this.saveCredentials(this.store.userCredentials)
     }
+    this.store.userId = await this.runInWorker('waitForUserId')
 
-    const { trigger } = context
-    // force fetch all data (the long way) when last trigger execution is older than 30 days
-    // or when the last job was an error
-    const isLastJobError =
-      trigger.current_state?.last_failure > trigger.current_state?.last_success
-    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
-    const distanceInDays = getDateDistanceInDays(
-      trigger.current_state?.last_execution
+    const bills = await this.getBills()
+    this.log(
+      'info',
+      `bills - phone_invoices length : ${bills.phone_invoices?.length}`
     )
-    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
-      this.log('info', `isLastJobError: ${isLastJobError}`)
-      this.log('info', `distanceInDays: ${distanceInDays}`)
-      this.log('info', `hasLastExecution: ${hasLastExecution}`)
-      FORCE_FETCH_ALL = true
+    this.log(
+      'info',
+      `bills - isp_invoices length : ${bills.isp_invoices?.length}`
+    )
+    this.log(
+      'info',
+      `bills - other_invoices length: ${bills.other_invoices?.length}`
+    )
+    if (bills.phone_invoices.length) {
+      this.log('debug', 'Saving phone_invoice bills')
+      await this.saveBills(bills.phone_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'phone_invoice'
+      })
     }
-    this.log('info', `FORCE_FETCH_ALL: ${FORCE_FETCH_ALL}`)
+    if (bills.isp_invoices.length) {
+      this.log('debug', 'Saving isp_invoice bills')
+      await this.saveBills(bills.isp_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'isp_invoice'
+      })
+    }
+    if (bills.other_invoices.length) {
+      this.log('debug', 'Saving other_invoice bills')
+      await this.saveBills(bills.other_invoices, {
+        context,
+        fileIdAttributes: ['vendorRef'],
+        contentType: 'application/pdf',
+        qualificationLabel: 'other_invoice'
+      })
+    }
 
+    this.store.userIdentity = await this.runInWorker(
+      'fetchIdentity',
+      this.store.userId,
+      this.store.coordinates
+    )
+    if (this.store.userIdentity) {
+      await this.saveIdentity({ contact: this.store.userIdentity })
+    }
+    // await this.waitForElementInWorker('[pause]')
+  }
+
+  async getBills() {
+    this.log('info', '📍️ getBills starts')
+    this.store.linesData = await this.runInWorker(
+      'fetchLinesData',
+      this.store.userId
+    )
+    await this.runInWorker(
+      'click',
+      '[data-entrylink="acoFactures"] [role="button"]'
+    )
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
     const moreBillsButtonSelector =
       '#page > section > .container > .has-text-centered > a'
-    await this.navigateToBillsPage()
-    await this.waitForElementInWorker('div[class="box is-loaded"]')
-    await this.runInWorkerUntilTrue({
-      method: 'waitForInterception',
-      args: [1]
+    await this.waitForElementInWorker(moreBillsButtonSelector)
+    if (await this.isElementInWorker(moreBillsButtonSelector)) {
+      await this.loadMoreBills(moreBillsButtonSelector)
+    }
+    const billsData = await this.runInWorkerUntilTrue({
+      method: 'checkInterception'
     })
+    const finalBills = await this.computeBills(billsData)
+    return finalBills
+  }
 
-    let moreBills = true
-    let lap = 0
-    while (moreBills) {
+  async loadMoreBills(selector) {
+    this.log('info', '📍️ loadMoreBills starts')
+    const wantedElement = selector
+    let hasMoreBills = true
+    while (hasMoreBills) {
       const lengthToCheck = await this.evaluateInWorker(
         function getBillsElementsLength() {
           return document.querySelectorAll(
@@ -295,14 +416,12 @@ class BouyguesTelecomContentScript extends ContentScript {
           ).length
         }
       )
-      lap++
-      moreBills = await this.isElementInWorker(moreBillsButtonSelector)
-      if (moreBills) {
-        await this.runInWorker('click', moreBillsButtonSelector)
+      hasMoreBills = await this.isElementInWorker(wantedElement)
+      if (hasMoreBills) {
+        await this.runInWorker('click', wantedElement)
         await Promise.all([
           this.runInWorkerUntilTrue({
-            method: 'waitForInterception',
-            args: [lap + 1]
+            method: 'checkInterception'
           }),
           this.runInWorkerUntilTrue({
             method: 'checkBillsElementLength',
@@ -310,476 +429,41 @@ class BouyguesTelecomContentScript extends ContentScript {
           })
         ])
       }
-      // only fetch the first page when not in fetch all mode
-      if (!FORCE_FETCH_ALL) {
-        moreBills = false
-      }
-    }
-    const neededIndex = this.store.arrayLength - 1
-    const pageBills = await this.runInWorker('computeBills', {
-      lap,
-      neededIndex
-    })
-    this.log('info', `pageBills : ${JSON.stringify(Object.keys(pageBills))}`)
-    this.log(
-      'info',
-      `pageBills - phone_invoices length : ${pageBills.phone_invoices?.length}`
-    )
-    this.log(
-      'info',
-      `pageBills - isp_invoices length : ${pageBills.isp_invoices?.length}`
-    )
-    this.log(
-      'info',
-      `pageBills - other_invoices length: ${pageBills.other_invoices?.length}`
-    )
-    if (pageBills.phone_invoices.length) {
-      this.log('debug', 'Saving phone_invoice bills')
-      await this.saveBills(pageBills.phone_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'phone_invoice'
-      })
-    }
-    if (pageBills.isp_invoices.length) {
-      this.log('debug', 'Saving isp_invoice bills')
-      await this.saveBills(pageBills.isp_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'isp_invoice'
-      })
-    }
-    if (pageBills.other_invoices.length) {
-      this.log('debug', 'Saving other_invoice bills')
-      await this.saveBills(pageBills.other_invoices, {
-        context,
-        fileIdAttributes: ['vendorRef'],
-        contentType: 'application/pdf',
-        qualificationLabel: 'other_invoice'
-      })
-    }
-    // saveIdentity in the end to have the first file visible to the user as soon as possible
-    if (FORCE_FETCH_ALL) {
-      if (this.store.possibleIdentity) {
-        await this.runInWorker('fetchIdentity', this.store.identityKeysContent)
-        await this.saveIdentity({ contact: this.store.userIdentity })
-      } else {
-        this.log('warn', 'Identity cannot be fetched')
-      }
-    }
-    if (pageBills.skippedDocs) {
-      this.log('warn', `${pageBills.skippedDocs} documents skipped`)
-      throw new Error('UNKNOWN_ERROR.PARTIAL_SYNC')
     }
   }
 
-  async downloadFileInWorker(entry) {
-    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
-    // fetch request necessary to finally get the file
-    this.log('debug', 'downloading file in worker')
-    const token = window.sessionStorage.getItem('a360-access_token')
-    const body = await ky
-      .get(entry.fileurl, {
-        headers: {
-          Authorization: `BEARER ${token}`
-        }
-      })
-      .json()
-    const downloadHref = body._actions
-      ? // isp/phone invoices
-        body._actions.telecharger.action
-      : // physical products invoices
-        body._links.lienTelechargement.href
-    const fileurl = `${apiUrl}${downloadHref}`
-
-    const blob = await ky
-      .get(fileurl, {
-        headers: {
-          Authorization: 'Bearer ' + token
-        }
-      })
-      .blob()
-
-    return await blobToBase64(blob)
-  }
-
-  async autoFill(credentials) {
-    if (credentials.login) {
-      const loginElement = document.querySelector(
-        'input[name="username"][role="textbox"]'
-      )
-      const passwordElement = document.querySelector(
-        'input[type="password"][role="textbox"]'
-      )
-      if (loginElement) {
-        loginElement.addEventListener('input', () => {
-          loginElement.value = credentials.login
-        })
-        passwordElement.addEventListener('input', () => {
-          passwordElement.value = credentials.password
-        })
-      }
-    }
-  }
-
-  async makeLoginFormVisible() {
+  async checkBillsElementLength(lengthToCheck) {
+    this.log('debug', '📍️ checkBillsElementLength starts')
     await waitFor(
       () => {
-        const loginFormButton = document.querySelector('#login')
-        if (loginFormButton) loginFormButton.click()
-
-        if (document.querySelector('#bytelid_partial_acoMenu_login')) {
+        this.log('info', `lengthToCheck : ${lengthToCheck}`)
+        const billElementLength = document.querySelectorAll(
+          '.has-background-white > .container > .container > .box.is-loaded'
+        ).length
+        this.log('info', `billElementLength : ${billElementLength}`)
+        if (billElementLength > lengthToCheck) {
+          this.log('info', 'more bills have been loaded')
           return true
-        } else {
-          this.log(
-            'info',
-            'Cannot find loginfForm, closing pop over and returning false'
-          )
-          const closeButton = document.querySelector(
-            'button[data-real-class="modal-close is-large"]'
-          )
-          if (closeButton) {
-            closeButton.click()
-          }
-          return false
         }
-      },
-      {
-        interval: 1000,
-        timeout: {
-          milliseconds: 15000,
-          message: new TimeoutError(
-            'makeLoginFormVisible timed out after 15000ms'
-          )
-        }
-      }
-    )
-    return true
-  }
-
-  async navigateToInfosPage() {
-    this.log('info', 'navigateToInfosPage starts')
-    await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
-    await this.clickAndWait(
-      'div[href="/mon-compte/infosperso"] a',
-      '.personalInfosAccountDetails'
-    )
-    const isActive = await this.runInWorker('checkIfContractIsActive')
-    if (isActive) {
-      // multiple ajax request update the content. Wait for every content to be present
-      await Promise.all([
-        this.waitForElementInWorker(
-          '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-        ),
-        this.waitForElementInWorker(
-          '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
-        )
-      ])
-    } else {
-      // if contract is not an active one, it might not contains any address to scrape
-      this.waitForElementInWorker(
-        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
-      )
-    }
-    return isActive
-  }
-
-  async navigateToBillsPage() {
-    this.log('info', 'navigateToBillsPage starts')
-    await this.goto(billsPageUrl)
-    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
-  }
-
-  async navigateToMonComptePage() {
-    await this.goto(monCompteUrl)
-    await Promise.race([
-      this.waitForElementInWorker('#bytelid_a360_login, .is-loaded'),
-      this.checkUnavailable()
-    ])
-  }
-
-  async checkUnavailable() {
-    this.waitForElementInWorker('body', {
-      includesText: 'Cette page est temporairement indisponible'
-    })
-    throw new Error('VENDOR_DOWN')
-  }
-
-  async checkIfContractIsActive() {
-    this.log('info', '📍️ checkIfContractIsActive starts')
-    const fullSessionStorage = window.sessionStorage
-    let wantedKey
-    for (let i = 0; fullSessionStorage.length; i++) {
-      const key = fullSessionStorage.key(i)
-      if (key.match(/^bytel-api\/\[[0-9]*\]\/contrats\/[0-9]*$/)) {
-        wantedKey = key
-        break
-      }
-    }
-    const keyContent = JSON.parse(window.sessionStorage.getItem(wantedKey))
-    if (keyContent.data.data.statut !== 'ACTIF') {
-      this.log('info', 'Actual contract is not active')
-      return false
-    } else {
-      this.log('info', 'Actual contract is active')
-      return true
-    }
-  }
-
-  async checkSessionStorageForIdentity() {
-    this.log('info', '📍️ checkSessionStorageForIdentity starts')
-    let wantedKeys = {}
-    let counter = 0
-
-    // Test sessionStorage every seconds for five seconds
-    await waitFor(
-      () => {
-        let fullSessionStorage = window.sessionStorage
-        this.log(
-          'debug',
-          `🍇️ sessionStorage length : ${fullSessionStorage.length}`
-        )
-        const keyRegex =
-          /bytel-api\/\[\d+\]\/personnes\/\d+(?:\/(adresses-facturation|coordonnees))?$|^bytel-api\/\[\d+\]\/personnes\/\d+$/
-        Object.keys(fullSessionStorage).find(key => {
-          const match = key.match(keyRegex)
-          if (match) {
-            if (match[0].includes('coordonnees')) {
-              this.log('debug', '🏮️ Found mail address')
-              if (!wantedKeys.mails) {
-                counter = counter + 1
-                wantedKeys.mails = key
-              }
-            } else if (match[0].includes('facturation')) {
-              this.log('debug', '🏮️ Found postal addresses')
-              if (!wantedKeys.billingAddresses) {
-                counter = counter + 1
-                wantedKeys.billingAddresses = key
-              }
-            } else {
-              this.log('debug', '🏮️ Found names')
-              if (!wantedKeys.names) {
-                counter = counter + 1
-                wantedKeys.names = key
-              }
-            }
-          }
-        })
-        return counter >= 3
-      },
-      {
-        interval: 1000,
-        timeout: {
-          milliseconds: 5000,
-          fallback: async () => {
-            this.log('warn', "⌛️ CheckSessionStorageForIdentity - Time's up")
-          }
-        }
-      }
-    )
-    if (counter >= 1) {
-      this.log('info', `Found ${counter}/3 matching keys for identity `)
-      const validSAI = await this.foundValidSourceAccountIdentifier(wantedKeys)
-      return validSAI
-    } else {
-      this.log('warn', 'Found none of the awaited keys for identity')
-      return false
-    }
-  }
-
-  async foundValidSourceAccountIdentifier(neededKeys) {
-    this.log('info', '📍️ foundValidSourceAccountIdentifier starts')
-    let validSAI = null
-    let mailSessionKey = null
-    let loginSessionKey = null
-    let billingAddSessionKey = null
-    const identityKeysContent = {}
-    if (neededKeys.mails) {
-      mailSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.mails)
-      )
-      identityKeysContent.contactInfos = mailSessionKey
-    }
-    if (neededKeys.names) {
-      loginSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.names)
-      )
-      identityKeysContent.personnalInfos = loginSessionKey
-    }
-    if (neededKeys.billingAddresses) {
-      billingAddSessionKey = JSON.parse(
-        window.sessionStorage.getItem(neededKeys.billingAddresses)
-      )
-      identityKeysContent.postalAddressesInfos = billingAddSessionKey
-    }
-    const foundEmails = mailSessionKey.data.data.emails
-    if ((foundEmails ?? false) && foundEmails.length) {
-      for (const email of foundEmails) {
-        if (email.emailPrincipal) {
-          this.log('info', 'Found principal email in listed mails')
-          validSAI = email.email
-          this.log(
-            'info',
-            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
-          )
-        } else {
-          this.log('info', 'Not principal email')
-        }
-      }
-    } else {
-      this.log('info', 'No email found in "/coordonees" sessionKey')
-    }
-    const possibleLogins = loginSessionKey.data.data.comptesAcces
-    if ((possibleLogins ?? false) && possibleLogins.length && !validSAI) {
-      let i = 1
-      for (const possibleLogin of possibleLogins) {
-        if (possibleLogin.includes('@')) {
-          this.log('info', `possibleLogin entry n°${i} match email condition`)
-          validSAI = possibleLogin
-          this.log(
-            'info',
-            `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`
-          )
-          break
-        }
-        i++
-      }
-    } else {
-      validSAI
-        ? this.log(
-            'info',
-            '"personnes/[id]" sessionKey not checked, already found a validSAI'
-          )
-        : this.log(
-            'info',
-            'No possibleLogins found in "personnes/[id]" sessionKey'
-          )
-    }
-    if (!validSAI) {
-      this.log(
-        'info',
-        'No email found in available sessionKeys, last chance finding a validSAI with pure scraping'
-      )
-      validSAI = await this.scrapValidSAI()
-      this.log('info', `validSAI : ${Boolean(validSAI)} => ${typeof validSAI}`)
-      if (!validSAI) {
-        this.log(
-          'warn',
-          'No emails found anywhere, fallbacking on firstName + lastName'
-        )
-        const { nom, prenom } = loginSessionKey.data.data
-        validSAI = `${nom} ${prenom}`
-      }
-    }
-    await this.sendToPilot({ identityKeysContent, possibleIdentity: true })
-    return validSAI
-  }
-
-  async fetchIdentity(identityInfos) {
-    this.log('info', 'fetchIdentity starts')
-    const { contactInfos, personnalInfos, postalAddressesInfos } = identityInfos
-    const contactData = contactInfos?.data?.data
-    const personnalData = personnalInfos?.data?.data
-    const postalData = postalAddressesInfos?.data?.data
-    let userIdentity = {}
-    if (personnalData) {
-      this.log('info', '🦜️Fetching personnalData')
-      const { nom: familyName, prenom: givenName } = personnalData
-      userIdentity.name = { givenName, familyName }
-    } else {
-      this.log('warn', '🏮️ No personnalData at all')
-    }
-    if (contactData) {
-      this.log('info', '🦜️Fetching contactData')
-      if (contactData.emails.length) {
-        this.log('info', '🦜️Found emails')
-        userIdentity.email = []
-        for (const email of contactData.emails) {
-          if (email.emailPrincipal) {
-            userIdentity.email.push({ address: email.email })
-          }
-        }
-      } else {
-        this.log('info', '🏮️ No contactData - emails found')
-      }
-      if (contactData.telephones.length) {
-        this.log('info', '🦜️Found phones')
-        userIdentity.phone = []
-        for (const phone of contactData.telephones) {
-          if (phone.numero) {
-            userIdentity.phone.push({
-              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
-              number: phone.numero
-            })
-          }
-        }
-      } else {
-        this.log('info', '🏮️ No contactData - phones found')
-      }
-    } else {
-      this.log('warn', '🏮️ No contactData at all')
-    }
-    if (postalData) {
-      this.log('info', '🦜️Fetching postalData')
-      if (postalData.items.length) {
-        this.log('info', '🦜️Found addresses')
-        userIdentity.address = []
-        for (const item of postalData.items) {
-          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
-          userIdentity.address.push({
-            number: item.numero,
-            street: item.rue,
-            postCode: item.codePostal,
-            city: item.ville,
-            country: item.pays,
-            formattedAddress
-          })
-        }
-      } else {
-        this.log('info', '🏮️ No postalData items found')
-      }
-    } else {
-      this.log('warn', '🏮️ No postalData at all')
-    }
-    await this.sendToPilot({ userIdentity })
-  }
-
-  async checkInterception(number) {
-    this.log('debug', 'checkInterception starts')
-    this.log('debug', `number in checkInterception : ${number}`)
-    if (billsJSON.length === number) {
-      await this.sendToPilot({ arrayLength: billsJSON.length })
-      return true
-    }
-    return false
-  }
-
-  async waitForInterception(number) {
-    await waitFor(
-      () => {
-        return this.checkInterception(number)
+        return false
       },
       {
         interval: 1000,
         timeout: 30 * 1000
       }
     )
+
     return true
   }
 
-  async computeBills(infos) {
-    this.log('debug', 'computeBills starts')
+  async computeBills(data) {
+    this.log('info', '📍️ computeBills starts')
+
     const result = { phone_invoices: [], isp_invoices: [], other_invoices: [] }
     let skippedDocs = 0
-    let comptesFacturation =
-      billsJSON[infos.neededIndex].data.consulterPersonne.factures
-        .comptesFacturation
+    let comptesFacturation = data.factures.comptesFacturation
     // Physical products invoices are separated from the mobile/isp invoices
-    let otherTypeBills =
-      billsJSON[infos.neededIndex].data.consulterPersonne.rechercherDocuments
-        .documents
+    let otherTypeBills = data.rechercherDocuments.documents
     let foundBills = []
     function sortFilenameFn(a, b) {
       a.filename > b.filename ? 1 : -1
@@ -913,77 +597,232 @@ class BouyguesTelecomContentScript extends ContentScript {
     return result
   }
 
-  async checkBillsElementLength(lengthToCheck) {
-    this.log('debug', '📍️ checkBillsElementLength starts')
+  async checkInterception() {
+    this.log('info', '📍️ checkInterception starts')
     await waitFor(
       () => {
-        this.log('info', `lengthToCheck : ${lengthToCheck}`)
-        const billElementLength = document.querySelectorAll(
-          '.has-background-white > .container > .container > .box.is-loaded'
-        ).length
-        this.log('info', `billElementLength : ${billElementLength}`)
-        if (billElementLength > lengthToCheck) {
-          this.log('info', 'greater')
-          return true
-        }
-        return false
+        const isFull = Boolean(Object.keys(billsJSON).length)
+        if (isFull) return true
+        else return false
       },
       {
         interval: 1000,
         timeout: 30 * 1000
       }
     )
-
-    return true
+    return billsJSON
   }
 
-  async scrapValidSAI() {
-    this.log('info', '📍️ scrapValidSAI starts')
-    const personalAccountDetailsElement = document.querySelector(
-      '.personalInfosAccountDetails'
-    )
-    const infosBlocs = personalAccountDetailsElement.querySelectorAll(
-      '.flexContent:not(.flexCenter)'
-    )
-    let emailBloc
-    for (const infosBloc of infosBlocs) {
-      if (infosBloc.innerHTML.includes('Email de connexion')) {
-        emailBloc = infosBloc
-        break
+  async fetchLinesData(userId) {
+    this.log('info', '📍️ fetchLinesData starts')
+    try {
+      const identityStorageItem = JSON.parse(
+        window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+      )
+      const linesData =
+        identityStorageItem.value?.data?.consulterPersonne?.lignes?.items
+      const lines = []
+      for (const line of linesData) {
+        lines.push({
+          lineStatus: line.statut,
+          lineNumber: line.numeroTel,
+          contractInfo: {
+            id: line.contrat.id,
+            type: line.contrat.typeLigne,
+            status: line.contrat.statut,
+            offerName: line.contrat.abonnement.detailsAbonnement.libelle
+          }
+        })
       }
+      return lines
+    } catch (error) {
+      this.log('warn', 'Could not found any lines data, cannot fetch bills')
+      throw new Error('UNKNOWN_ERROR')
     }
-    const wantedSpan = emailBloc.querySelectorAll('span:not([class])')
-    // first element is the title of the bloc, second one the wanted email value
-    const foundEmail = wantedSpan[1]?.textContent.includes('@')
-      ? wantedSpan[1].textContent
-      : null
-    return foundEmail
+  }
+
+  async downloadFileInWorker(entry) {
+    // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
+    // fetch request necessary to finally get the file
+    this.log('debug', 'downloading file in worker')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    const body = await ky
+      .get(entry.fileurl, {
+        headers: {
+          Authorization: `BEARER ${token}`
+        }
+      })
+      .json()
+    const downloadHref = body._actions
+      ? // isp/phone invoices
+        body._actions.telecharger.action
+      : // physical products invoices
+        body._links.lienTelechargement.href
+    const fileurl = `${apiUrl}${downloadHref}`
+
+    const blob = await ky
+      .get(fileurl, {
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      })
+      .blob()
+
+    return await blobToBase64(blob)
+  }
+
+  async fetchIdentity(userId, userCoordinates) {
+    this.log('info', 'fetchIdentity starts')
+    const identityStorageItem = JSON.parse(
+      window.sessionStorage.getItem(`bytel-api/queriesByPersonId/[${userId}]`)
+    )
+    const mailsData = userCoordinates.response?.emails
+    const phonesData = userCoordinates.response?.telephones
+    const personnalData = identityStorageItem.value?.data?.consulterPersonne
+    const postalData = userCoordinates.response?.adressesPostales
+    let userIdentity = {}
+    if (personnalData) {
+      this.log('info', '🦜️Fetching personnalData')
+      const { nom: familyName, prenom: givenName } = personnalData
+      userIdentity.name = { givenName, familyName }
+    } else {
+      this.log('warn', '🏮️ No personnalData at all')
+    }
+    if (mailsData) {
+      this.log('info', '🦜️Fetching mailsData')
+      if (mailsData.length) {
+        this.log('info', '🦜️Found emails')
+        userIdentity.email = []
+        for (const email of mailsData) {
+          if (email.emailPrincipal) {
+            userIdentity.email.push({ address: email.email })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - emails found')
+      }
+      if (phonesData.length) {
+        this.log('info', '🦜️Found phones')
+        userIdentity.phone = []
+        for (const phone of phonesData) {
+          if (phone.numero) {
+            userIdentity.phone.push({
+              type: phone.typeTelephone === 'PORTABLE' ? 'mobile' : 'home',
+              number: phone.numero
+            })
+          }
+        }
+      } else {
+        this.log('info', '🏮️ No contactData - phones found')
+      }
+    } else {
+      this.log('warn', '🏮️ No contactData at all')
+    }
+    if (postalData) {
+      this.log('info', '🦜️Fetching postalData')
+      if (postalData.length) {
+        this.log('info', '🦜️Found addresses')
+        userIdentity.address = []
+        for (const item of postalData) {
+          const formattedAddress = `${item.numero} ${item.rue} ${item.codePostal} ${item.ville} ${item.pays}`
+          userIdentity.address.push({
+            number: item.numero,
+            street: item.rue,
+            postCode: item.codePostal,
+            city: item.ville,
+            country: item.pays,
+            formattedAddress
+          })
+        }
+      } else {
+        this.log('info', '🏮️ No postalData items found')
+      }
+    } else {
+      this.log('warn', '🏮️ No postalData at all')
+    }
+    return userIdentity
+  }
+
+  async navigateToInfosPage() {
+    this.log('info', 'navigateToInfosPage starts')
+    // await this.waitForElementInWorker('div[href="/mon-compte/infosperso"] a')
+    // await this.clickAndWait(
+    //   'div[href="/mon-compte/infosperso"] a',
+    //   '.personalInfosAccountDetails'
+    // )
+    await this.waitForElementInWorker('a[data-roles="menuHeader"]', {
+      includesText: 'Mes informations perso'
+    })
+    await this.runInWorker('click', 'a[data-roles="menuHeader"]', {
+      includesText: 'Mes informations perso'
+    })
+    await this.waitForElementInWorker('.personalInfosAccountDetails')
+    const isActive = await this.runInWorker('checkIfContractIsActive')
+    if (isActive) {
+      // multiple ajax request update the content. Wait for every content to be present
+      await Promise.all([
+        this.waitForElementInWorker(
+          '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+        ),
+        this.waitForElementInWorker(
+          '.personalInfosBillingAddress .ui .is360 .text div[class="ui is360 text"] > span'
+        )
+      ])
+    } else {
+      // if contract is not an active one, it might not contains any address to scrape
+      this.waitForElementInWorker(
+        '.personalInfosAccountDetails .tiles .segment:not(.flexCenter)'
+      )
+    }
+    return isActive
+  }
+
+  async navigateToBillsPage() {
+    this.log('info', 'navigateToBillsPage starts')
+    await this.goto(billsPageUrl)
+    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
+  }
+
+  async navigateToMonComptePage() {
+    await this.goto(monCompteUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#bytelid_a360_login'),
+      this.runInWorkerUntilTrue({ method: 'waitForUserId' })
+    ])
+  }
+
+  async waitForUserId() {
+    this.log('info', '📍️ waitForUserId starts')
+    let userId
+    await waitFor(
+      () => {
+        const sessionStorageId = window.sessionStorage.getItem('a360-user-id')
+        if (!sessionStorageId) return false
+        userId = sessionStorageId
+        return true
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return userId
   }
 }
 
-const connector = new BouyguesTelecomContentScript()
+const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
     additionalExposedMethodsNames: [
+      'getIframeSrc',
+      'waitForUserId',
       'fetchIdentity',
-      'waitForInterception',
-      'computeBills',
-      'makeLoginFormVisible',
+      'fetchLinesData',
+      'checkInterception',
       'checkBillsElementLength',
-      'disconnectAndCheckSessionStorage',
-      'checkSessionStorageForIdentity',
-      'foundValidSourceAccountIdentifier',
-      'checkIfContractIsActive',
-      'autoFill'
+      'disconnectAndCheckSessionStorage'
     ]
   })
   .catch(err => {
     log.warn(err)
   })
-
-function getDateDistanceInDays(dateString) {
-  const distanceMs = Date.now() - new Date(dateString).getTime()
-  const days = 1000 * 60 * 60 * 24
-
-  return Math.floor(distanceMs / days)
-}

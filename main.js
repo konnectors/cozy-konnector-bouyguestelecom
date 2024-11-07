@@ -9367,10 +9367,11 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       'click',
       '[data-entrylink="acoFactures"] [role="button"]'
     )
-    await this.waitForElementInWorker('a', { includesText: 'Télécharger' })
-    const moreBillsButtonSelector =
-      '#page > section > .container > .has-text-centered > a'
-    await this.waitForElementInWorker(moreBillsButtonSelector)
+    await Promise.all([
+      this.waitForElementInWorker('a', { includesText: 'Télécharger' }),
+      this.runInWorker('waitForLoadMoreBillsButton')
+    ])
+    const moreBillsButtonSelector = 'div[class="column has-text-centered"] > a'
     if (await this.isElementInWorker(moreBillsButtonSelector)) {
       await this.loadMoreBills(moreBillsButtonSelector)
     }
@@ -9379,6 +9380,31 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     })
     const finalBills = await this.computeBills(billsData)
     return finalBills
+  }
+
+  async waitForLoadMoreBillsButton() {
+    this.log('info', '📍️ waitForLoadMoreBillsButton starts')
+    try {
+      await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_1__["default"])(
+        () => {
+          const loadMoreBillsButton = document.querySelector(
+            'div[class="column has-text-centered"] > a'
+          )
+          if (loadMoreBillsButton) {
+            this.log('info', 'moreBills button found')
+            return true
+          }
+          return false
+        },
+        {
+          interval: 1000,
+          timeout: 3 * 1000
+        }
+      )
+    } catch (error) {
+      this.log('info', 'No moreBills button found')
+      return true
+    }
   }
 
   async loadMoreBills(selector) {
@@ -9795,7 +9821,8 @@ connector
       'fetchLinesData',
       'checkInterception',
       'checkBillsElementLength',
-      'disconnectAndCheckSessionStorage'
+      'disconnectAndCheckSessionStorage',
+      'waitForLoadMoreBillsButton'
     ]
   })
   .catch(err => {

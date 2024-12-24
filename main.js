@@ -9487,7 +9487,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
         foundBills.push(bill)
       })
     }
-    const foundLineNumbers = document.querySelectorAll('.column > .is-nowrap')
     let i = 0
     // ensuring array is sorted from most recent to older
     foundBills.sort(sortDateFn)
@@ -9532,8 +9531,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           'warn',
           'It seems like no phone number is found, trying to scrape it instead'
         )
+        // Might find something better to avoid errors when no lines number are found at all, it might be a loading error on the website
+        const foundLineNumbers = document.querySelectorAll(
+          '.column > .is-nowrap'
+        )
         // As foundBills has been sorted by date, we can select the element following loops
-        const foundLineNumber = foundLineNumbers[i].textContent.replace(
+        const foundLineNumber = foundLineNumbers[i]?.textContent.replace(
           / /g,
           ''
         )

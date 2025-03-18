@@ -295,6 +295,8 @@ class BouyguesTelecomContentScript extends ContentScript {
 
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
+    this.store.userId = await this.runInWorker('waitForUserId')
+    await this.runInWorker('getCoordinates', this.store.userId)
     await this.waitForRequestInterception('coordinates')
     let validSAI
     const coordinateEmail = await this.getUserMainEmail(
@@ -405,6 +407,19 @@ class BouyguesTelecomContentScript extends ContentScript {
     return finalBills
   }
 
+  async getCoordinates(userId) {
+    this.log('info', 'getCoordinates starts')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    await fetch(
+      `https://api.bouyguestelecom.fr/personnes/${userId}/coordonnees`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    )
+  }
   async waitForLoadMoreBillsButton() {
     this.log('info', '📍️ waitForLoadMoreBillsButton starts')
     try {
@@ -843,6 +858,7 @@ const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
     additionalExposedMethodsNames: [
+      'getCoordinates',
       'getIframeSrc',
       'waitForUserId',
       'fetchIdentity',

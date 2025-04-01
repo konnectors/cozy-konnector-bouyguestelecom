@@ -10175,6 +10175,8 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
 
   async getUserDataFromWebsite() {
     this.log('info', '🤖 getUserDataFromWebsite starts')
+    this.store.userId = await this.runInWorker('waitForUserId')
+    await this.runInWorker('getCoordinates', this.store.userId)
     await this.waitForRequestInterception('coordinates')
     let validSAI
     const coordinateEmail = await this.getUserMainEmail(
@@ -10285,6 +10287,19 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     return finalBills
   }
 
+  async getCoordinates(userId) {
+    this.log('info', 'getCoordinates starts')
+    const token = window.sessionStorage.getItem('a360-access_token')
+    await fetch(
+      `https://api.bouyguestelecom.fr/personnes/${userId}/coordonnees`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    )
+  }
   async waitForLoadMoreBillsButton() {
     this.log('info', '📍️ waitForLoadMoreBillsButton starts')
     try {
@@ -10553,7 +10568,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   async downloadFileInWorker(entry) {
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
-    this.log('debug', 'downloading file in worker')
+    this.log('debug', 'Override downloading file in worker')
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky__WEBPACK_IMPORTED_MODULE_5__["default"].get(entry.fileurl, {
         headers: {
@@ -10567,15 +10582,43 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
       : // physical products invoices
         body._links.lienTelechargement.href
     const fileurl = `${apiUrl}${downloadHref}`
+    try {
+      const blob = await ky__WEBPACK_IMPORTED_MODULE_5__["default"].get(fileurl, {
+          headers: {
+            Authorization: 'Bearer ' + token
+          },
+          // Avoid retry on this request as the website is redirecting to another server wich has different statusCode
+          retry: 0
+        })
+        .blob()
 
-    const blob = await ky__WEBPACK_IMPORTED_MODULE_5__["default"].get(fileurl, {
-        headers: {
-          Authorization: 'Bearer ' + token
+      return await (0,cozy_clisk_dist_contentscript_utils__WEBPACK_IMPORTED_MODULE_3__.blobToBase64)(blob)
+    } catch (error) {
+      this.log('debug', `Full error : ${error}`)
+      const errorStatus = error.response?.status
+      this.log('debug', `Error type : ${typeof errorStatus} `)
+      this.log('debug', `Error status : ${errorStatus}`)
+      let errorToLog = ''
+      if ([401, 404, 403, 500, 502, 503].includes(errorStatus)) {
+        if (errorStatus === 404)
+          errorToLog = 'Website cannot find the wanted url'
+        else if (errorStatus === 403 || errorStatus === 401) {
+          errorToLog = 'User is not allowed to access the wanted URL'
+        } else if (errorStatus === 500) {
+          this.log(
+            'warn',
+            'This file received a 500 response code. Verify on the website if this file is not downloadable'
+          )
+          return ''
+        } else {
+          errorToLog = 'Website server error accessing the wanted URL'
         }
-      })
-      .blob()
-
-    return await (0,cozy_clisk_dist_contentscript_utils__WEBPACK_IMPORTED_MODULE_3__.blobToBase64)(blob)
+        this.log('error', errorToLog)
+        throw new Error('VENDOR_DOWN')
+      } else {
+        throw new Error('UNKNOWN_ERROR')
+      }
+    }
   }
 
   async fetchIdentity(userId, userCoordinates) {
@@ -10691,6 +10734,7 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
   }
 
   async navigateToMonComptePage() {
+    this.log('info', 'navigateToMonComptePage starts')
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#bytelid_a360_login'),
@@ -10721,6 +10765,7 @@ const connector = new BouyguesTelecomContentScript({ requestInterceptor })
 connector
   .init({
     additionalExposedMethodsNames: [
+      'getCoordinates',
       'getIframeSrc',
       'waitForUserId',
       'fetchIdentity',

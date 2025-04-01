@@ -688,7 +688,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   async downloadFileInWorker(entry) {
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
-    this.log('debug', 'downloading file in worker')
+    this.log('debug', 'Override downloading file in worker')
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky
       .get(entry.fileurl, {
@@ -703,16 +703,44 @@ class BouyguesTelecomContentScript extends ContentScript {
       : // physical products invoices
         body._links.lienTelechargement.href
     const fileurl = `${apiUrl}${downloadHref}`
+    try {
+      const blob = await ky
+        .get(fileurl, {
+          headers: {
+            Authorization: 'Bearer ' + token
+          },
+          // Avoid retry on this request as the website is redirecting to another server wich has different statusCode
+          retry: 0
+        })
+        .blob()
 
-    const blob = await ky
-      .get(fileurl, {
-        headers: {
-          Authorization: 'Bearer ' + token
+      return await blobToBase64(blob)
+    } catch (error) {
+      this.log('debug', `Full error : ${error}`)
+      const errorStatus = error.response?.status
+      this.log('debug', `Error type : ${typeof errorStatus} `)
+      this.log('debug', `Error status : ${errorStatus}`)
+      let errorToLog = ''
+      if ([401, 404, 403, 500, 502, 503].includes(errorStatus)) {
+        if (errorStatus === 404)
+          errorToLog = 'Website cannot find the wanted url'
+        else if (errorStatus === 403 || errorStatus === 401) {
+          errorToLog = 'User is not allowed to access the wanted URL'
+        } else if (errorStatus === 500) {
+          this.log(
+            'warn',
+            'This file received a 500 response code. Verify on the website if this file is not downloadable'
+          )
+          return ''
+        } else {
+          errorToLog = 'Website server error accessing the wanted URL'
         }
-      })
-      .blob()
-
-    return await blobToBase64(blob)
+        this.log('error', errorToLog)
+        throw new Error('VENDOR_DOWN')
+      } else {
+        throw new Error('UNKNOWN_ERROR')
+      }
+    }
   }
 
   async fetchIdentity(userId, userCoordinates) {
@@ -828,6 +856,7 @@ class BouyguesTelecomContentScript extends ContentScript {
   }
 
   async navigateToMonComptePage() {
+    this.log('info', 'navigateToMonComptePage starts')
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#bytelid_a360_login'),

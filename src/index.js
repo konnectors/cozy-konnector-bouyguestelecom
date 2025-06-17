@@ -732,6 +732,12 @@ class BouyguesTelecomContentScript extends ContentScript {
             'This file received a 500 response code. Verify on the website if this file is not downloadable'
           )
           return ''
+        } else if (errorStatus === 502) {
+          this.log(
+            'warn',
+            'Website is struggling to get the wanted bill, retry later'
+          )
+          return ''
         } else {
           errorToLog = 'Website server error accessing the wanted URL'
         }

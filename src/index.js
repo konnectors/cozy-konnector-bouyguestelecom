@@ -860,7 +860,9 @@ class BouyguesTelecomContentScript extends ContentScript {
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#bytelid_a360_login'),
-      this.runInWorkerUntilTrue({ method: 'waitForUserId' })
+      this.waitForElementInWorker('a', {
+        includesText: 'Me déconnecter'
+      })
     ])
   }
 

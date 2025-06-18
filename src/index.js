@@ -689,6 +689,9 @@ class BouyguesTelecomContentScript extends ContentScript {
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
     this.log('debug', 'Override downloading file in worker')
+    // Allow server to breath between downloads, it seems to avoid the 502 recuring error
+    // 1 second is too short, 2 seems sufficient
+    await sleep(2)
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky
       .get(entry.fileurl, {
@@ -730,6 +733,12 @@ class BouyguesTelecomContentScript extends ContentScript {
           this.log(
             'warn',
             'This file received a 500 response code. Verify on the website if this file is not downloadable'
+          )
+          return ''
+        } else if (errorStatus === 502) {
+          this.log(
+            'warn',
+            'Website is struggling to get the wanted bill, retry later'
           )
           return ''
         } else {
@@ -860,7 +869,9 @@ class BouyguesTelecomContentScript extends ContentScript {
     await this.goto(monCompteUrl)
     await Promise.race([
       this.waitForElementInWorker('#bytelid_a360_login'),
-      this.runInWorkerUntilTrue({ method: 'waitForUserId' })
+      this.waitForElementInWorker('a', {
+        includesText: 'Me déconnecter'
+      })
     ])
   }
 
@@ -901,3 +912,9 @@ connector
   .catch(err => {
     log.warn(err)
   })
+
+function sleep(delay) {
+  return new Promise(resolve => {
+    setTimeout(resolve, delay * 1000)
+  })
+}

@@ -689,6 +689,9 @@ class BouyguesTelecomContentScript extends ContentScript {
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
     this.log('debug', 'Override downloading file in worker')
+    // Allow server to breath between downloads, it seems to avoid the 502 recuring error
+    // 1 second is too short, 2 seems sufficient
+    await sleep(2)
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky
       .get(entry.fileurl, {
@@ -909,3 +912,9 @@ connector
   .catch(err => {
     log.warn(err)
   })
+
+function sleep(delay) {
+  return new Promise(resolve => {
+    setTimeout(resolve, delay * 1000)
+  })
+}

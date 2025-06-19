@@ -22759,9 +22759,6 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
     // overload ContentScript.downloadFileInWorker to be able to get the token and to run double
     // fetch request necessary to finally get the file
     this.log('debug', 'Override downloading file in worker')
-    // Allow server to breath between downloads, it seems to avoid the 502 recuring error
-    // 1 second is too short, 2 seems sufficient
-    await sleep(2)
     const token = window.sessionStorage.getItem('a360-access_token')
     const body = await ky__WEBPACK_IMPORTED_MODULE_5__["default"]
       .get(entry.fileurl, {
@@ -22806,9 +22803,12 @@ class BouyguesTelecomContentScript extends cozy_clisk_dist_contentscript__WEBPAC
           )
           return ''
         } else if (errorStatus === 502) {
+          // This is a know behavior, we notice that if we slow down the download rate to approx. 2 sec between each call, we will almost never receive this error
+          // Anyway, to improve the konnector's perfs, we agreed we will not wait, as it always happen after several downloads, and it is usually for one file, starting after (at least) the 4, 5 or 6th files.
+          // Most recent bills will always be fetched. The missed ones will be downloaded on the next konnector's run.
           this.log(
             'warn',
-            'Website is struggling to get the wanted bill, retry later'
+            "Website is returning 502 for the wanted bill, it will be downloaded on the next konnector's run"
           )
           return ''
         } else {
@@ -22982,12 +22982,6 @@ connector
   .catch(err => {
     log.warn(err)
   })
-
-function sleep(delay) {
-  return new Promise(resolve => {
-    setTimeout(resolve, delay * 1000)
-  })
-}
 
 })();
 
